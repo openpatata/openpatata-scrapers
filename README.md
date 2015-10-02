@@ -3,7 +3,8 @@ plenary sittings, bills and regulations, and questions.
 
 ## Getting set up
 
-```git clone https://github.com/openpatata/openpatata-scrapers
+```bash
+git clone https://github.com/openpatata/openpatata-scrapers
 cd openpatata-scrapers
 git clone https://github.com/openpatata/openpatata-data data
 
@@ -12,21 +13,28 @@ brew link --force icu4c
 
 pyvenv venv
 source source venv/bin/activate
-pip3 install -r requirements.txt```
+pip3 install -r requirements.txt
+```
 
 To populate the database:
 
-```python3 insert.py```
+```bash
+python3 insert.py
+```
 
 To crawl the parliament website:
 
-```python3 scrape.py run agendas 2> error.log
+```bash
+python3 scrape.py run agendas 2> error.log
 python3 scrape.py run transcripts 2>> error.log
-python3 scrape.py run qas 2>> error.log```
+python3 scrape.py run qas 2>> error.log
+```
 
 To dump a mongo collection:
 
-```python3 scrape.py dump plenary_sittings```
+```bash
+python3 scrape.py dump plenary_sittings
+```
 
 ## License
 
