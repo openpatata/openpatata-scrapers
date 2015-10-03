@@ -73,7 +73,7 @@ class NameConverter:
                   for mp in db.mps.find(projection={'name.el': True})}
 
     _TRANSFORMS_F = (
-        # before  after
+        # before     after
         ((r'ς$',     r''),),
         ((r'',       r''),))
     _TRANSFORMS_M = (
@@ -97,7 +97,7 @@ class NameConverter:
             first, *middle, surname = self._orig_name
             self._names.append([
                 re.sub(fore[0], fore[1], first),
-                *(middle and re.sub(aft[0], aft[1], middle[0])),
+                *(middle and [re.sub(aft[0], aft[1], middle[0])]),
                 re.sub(aft[0], aft[1], surname)])
 
     @property
@@ -232,14 +232,14 @@ async def parse_agenda(url):
     agenda_items = html.xpath('//div[@class="articleBox"]//tr/td[last()]')
     for i in agenda_items:
         try:
-            title, *ext, ident = [e.text_content() for e in i.xpath('div')]
+            title, *ext, ident = [e.text_content() for e in i.xpath('div|p')]
         except ValueError:
             # Presumably a faux header; skip it
             continue
 
         title = re.sub(r'[  ]+', ' ', title).rstrip('.')
         ident = re.sub(
-            r'[^0-9.\-]', '', ident.strip() or ext[0]).strip('.')
+            r'[^0-9\.\-]', '', ident.strip() or ext[0]).strip('.')
         try:
             doc_type = re.match(r'23\.(\d{2})', ident).group(1)
         except AttributeError:
@@ -323,36 +323,41 @@ async def parse_qa_list(url):
     html.make_links_absolute(url)
     text = _normalise_glyphs(html.body.text_content())
 
-    SUBS = ((r'\r\n',                    r'\n'),
-            (r'(?<=\n)[  ]+',            r''),
-            (r'[  ]+(?=\n)',             r''),
-            (r'(?<!\n)\n(\d+\.)',        r'\n\n\1'),
-            (r'(?<!\n)\n(?!\n)',         r' '),
-            (r'\n{3,}',                  r'\n\n'),
-            (r'(?<=«) +',                r''),
-            (r' +(?=»)',                 r''),
-            (r'(?<=Ερώτηση με αρ\.)\n+', r' '),
-            (r'(?<=») (?=Απάντηση\n)',   r'\n'),
-            (r'(?<=\d{4}\.) (?=«)',      r'\n\n'),
-            (r'\n+(?=\d{4}\.\n)',        r' '),
-            (r'(?<=κ\. )’',              r'Ά'))  # ....
+    SUBS = ((r'\r\n',                    '\n'),
+            (r'(?<=\n)[  ]+',            ''),
+            (r'[  ]+(?=\n)',             ''),
+            (r'(?<!\n)\n(?=\d+\.)',      '\n\n'),
+            (r'(?<!\n)\n(?!\n)',         ' '),
+            (r'\n{3,}',                  '\n\n'),
+            (r'(?<=«) +',                ''),
+            (r' +(?=»)',                 ''),
+            (r'(?<=Ερώτηση με αρ\.)\n+', ' '),
+            (r'(?<=») +(?=Απάντηση\n)',  '\n'),
+            (r'(?<=\d{4}\.) (?=«)',      '\n\n'),
+            (r'\n+(?=\d{4}\.\n)',        ' '),
+            (r'(?<=κ\. )’',              'Ά'))  # ....
     for pattern, repl in SUBS:
         text = re.sub(pattern, repl, text)
 
     question = Record()
     for line in text.splitlines():
-        m1 = re.match(
-            r'Ερώτηση με αρ\. (?P<id>[\d\.]+),? ημερομηνίας'
-            r' (?P<date>[ \d\w]+), (?P<pp>του|της) βουλευτ(?:ή|ού) εκλογικής'
-            r' περιφέρειας \w+ κ\. (?P<mp>[\.\w ]+)', line)
-        # Prior to 2002
-        m2 = re.match(
-            r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που υποβλήθηκε από'
-            r' (?P<pp>το|τη) βουλευτή (?:εκλογικής περιφέρειας )?\w+'
-            r' κ\. (?P<mp>[\.\w ]+) (?:την|στις) (?P<date>[ \d\w]+)', line)
+        if line.startswith('Ερώτηση με αρ.'):
+            m1 = re.match(
+                r'Ερώτηση με αρ\. (?P<id>[\d\.]+),? ημερομηνίας'
+                r' (?P<date>[ \d\w]+), (?P<pp>του|της) βουλευτ(?:ή|ού)'
+                r' εκλογικής περιφέρειας \w+ κ\. (?P<mp>[\.\w ]+)', line)
+            # Prior to 2002
+            m2 = re.match(
+                r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που υποβλήθηκε από'
+                r' (?P<pp>το|τη) βουλευτή (?:εκλογικής περιφέρειας )?\w+'
+                r' κ\. (?P<mp>[\.\w ]+) (?:την|στις) (?P<date>[ \d\w]+)', line)
 
-        m = m1 or m2
-        if m:
+            m = m1 or m2
+            if not m:
+                logging.error("Could not parse heading '{}' in '{}'".format(
+                    line, url))
+                continue
+
             question['identifier'] = m.group('id')
             try:
                 question['question']['by'] = [
