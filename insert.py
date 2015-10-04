@@ -1,7 +1,8 @@
 
 from collections import OrderedDict
-import pymongo
 import os
+
+import pymongo
 import yaml
 
 

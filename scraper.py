@@ -28,12 +28,15 @@ from docopt import docopt
 import lxml.html
 import icu
 import pymongo
-import yaml
+import pypandoc
+
+from export import yaml_dump
 
 DATA_DIR = './data-new/'
 TASKS = ...
 
 db = pymongo.MongoClient()['openpatata-data']
+
 # A transliterator to split out any diacritics (`NFKD`) and strip them
 # off (`[:nonspacing mark:] any-remove`), and to downcase the
 # input (`any-lower`)
@@ -232,7 +235,8 @@ async def parse_agenda(url):
     agenda_items = html.xpath('//div[@class="articleBox"]//tr/td[last()]')
     for i in agenda_items:
         try:
-            title, *ext, ident = [e.text_content() for e in i.xpath('div|p')]
+            title, *ext, ident = [e.text_content()
+                                  for e in i.xpath('*[self::div or self::p]')]
         except ValueError:
             # Presumably a faux header; skip it
             continue
@@ -319,98 +323,96 @@ async def parse_qa_list(url):
     """Create individual question records from a question listing."""
     response = await aiohttp.get(url)
 
-    html = lxml.html.document_fromstring(await response.text())
-    html.make_links_absolute(url)
-    text = _normalise_glyphs(html.body.text_content())
+    text = await response.text()
+    text = pypandoc.convert(text, 'html5', format='html')
 
-    SUBS = ((r'\r\n',                    '\n'),
-            (r'(?<=\n)[  ]+',            ''),
-            (r'[  ]+(?=\n)',             ''),
-            (r'(?<!\n)\n(?=\d+\.)',      '\n\n'),
-            (r'(?<!\n)\n(?!\n)',         ' '),
-            (r'\n{3,}',                  '\n\n'),
-            (r'(?<=«) +',                ''),
-            (r' +(?=»)',                 ''),
-            (r'(?<=Ερώτηση με αρ\.)\n+', ' '),
-            (r'(?<=») +(?=Απάντηση\n)',  '\n'),
-            (r'(?<=\d{4}\.) (?=«)',      '\n\n'),
-            (r'\n+(?=\d{4}\.\n)',        ' '),
-            (r'(?<=κ\. )’',              'Ά'))  # ....
-    for pattern, repl in SUBS:
-        text = re.sub(pattern, repl, text)
+    def _clean(mumble_jumble):
+        mumble_unjumble = _normalise_glyphs(mumble_jumble).strip()
+        SUBS = ((r' ',          r' '),
+                (r' {2,}',      r' '),
+                (r'(?<=«) +',   r''),
+                (r' +(?=»)',    r''),
+                (r'(?<=κ\. )’', r'Ά'))  # ....
+        for pattern, repl in SUBS:
+            mumble_unjumble = re.sub(pattern, repl, mumble_unjumble)
+        return mumble_unjumble
+
+    html = lxml.html.document_fromstring(text)
+    html.make_links_absolute(url)
+
+    def _commit(question):
+        if question['_filename']:
+            question['question']['text'] = \
+                '\n\n'.join(question['question']['text']).strip()
+            result = db.questions.find_one_and_update(
+                filter={'_filename': question['_filename']},
+                update={'$set': question},
+                upsert=True,
+                return_document=pymongo.ReturnDocument.AFTER)
+            if not result:
+                logging.warning(
+                    "Could not insert or update question '{}'"
+                    " from '{}'".format(question, url))
+        elif question['question']['text'] and not question['_filename']:
+            logging.error("Unpaired text '{}' in '{}'".format(
+                question['question']['text'], url))
 
     question = Record()
-    for line in text.splitlines():
-        if line.startswith('Ερώτηση με αρ.'):
-            m1 = re.match(
+    for e, e_text in ((e, _clean(e.text_content()))
+                      for e in html.xpath('//tr//p')):
+        if e_text.startswith('Ερώτηση με αρ.'):
+            _commit(question)
+            question = Record()
+
+            m = (re.match(
                 r'Ερώτηση με αρ\. (?P<id>[\d\.]+),? ημερομηνίας'
                 r' (?P<date>[ \d\w]+), (?P<pp>του|της) βουλευτ(?:ή|ού)'
-                r' εκλογικής περιφέρειας \w+ κ\. (?P<mp>[\.\w ]+)', line)
-            # Prior to 2002
-            m2 = re.match(
-                r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που υποβλήθηκε από'
-                r' (?P<pp>το|τη) βουλευτή (?:εκλογικής περιφέρειας )?\w+'
-                r' κ\. (?P<mp>[\.\w ]+) (?:την|στις) (?P<date>[ \d\w]+)', line)
-
-            m = m1 or m2
+                r' εκλογικής περιφέρειας \w+ κ\. (?P<mp>[\.\w ]+)', e_text) or
+                # Format prior to 2002
+                re.match(
+                    r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που υποβλήθηκε από'
+                    r' (?P<pp>το|τη) βουλευτή (?:εκλογικής περιφέρειας )?\w+'
+                    r' κ\. (?P<mp>[\.\w ]+) (?:την|στις) (?P<date>[ \d\w]+)',
+                    e_text))
             if not m:
                 logging.error("Could not parse heading '{}' in '{}'".format(
-                    line, url))
+                    e_text, url))
                 continue
 
             question['identifier'] = m.group('id')
-            try:
-                question['question']['by'] = [
-                    NameConverter.find_match(m.group('mp'), m.group('pp'))]
-            except ValueError:
-                loggging.warning('')
 
-            question['question']['date'] = m.group('date')
             try:
                 question['question']['date'] = _parse_long_date(
-                    question['question']['date'])
+                    m.group('date'))
             except ValueError:
                 logging.error("Could not convert date of question with id"
                               " '{}' in '{}'".format(question['identifier'],
                                                      url))
-            else:
-                question['_filename'] = '{}.yaml'.format(
-                    question['identifier'])
+                continue
 
-                try:
-                    question['answer'] = html.xpath(
-                        '//a[contains(@href, "{}")]/@href'.format(
-                            question['identifier'].replace('.', '_')))[0]
-                except IndexError:
-                    question['answer'] = None
-                    logging.warning(
-                        "Could not extract URL of answer to question with"
-                        " id '{}' in '{}'".format(question['identifier'], url))
+            question['_filename'] = '{}.yaml'.format(question['identifier'])
+            question['question']['title'] = e_text
 
-            question['question']['title'] = line
-            continue
-
-        m = re.match(r'Απάντηση$', line)
-        if m:
-            if question['question']['text'] and not question['_filename']:
-                logging.error(r"Unpaired text '{}' in '{}'".format(
-                    question['question']['text'], url))
-            else:
-                question['question']['text'] = \
-                    question['question']['text'].strip()
-                result = db.questions.find_one_and_update(
-                    filter={'_filename': question['_filename']},
-                    update={'$set': question},
-                    upsert=True,
-                    return_document=pymongo.ReturnDocument.AFTER)
-                if not result:
-                    logging.warning(
-                        "Could not insert or update question '{}'"
-                        " from '{}'".format(question, url))
-            question = Record()
+            question['question']['by'] = []
+            try:
+                question['question']['by'].append(
+                    NameConverter.find_match(m.group('mp'), m.group('pp')))
+            except ValueError as e:
+                logging.warning(e)
+        elif e_text.startswith('Απάντηση'):
+            question['answers'] = question['answers'] or []
+            try:
+                question['answers'].append(e.xpath('.//a/@href')[0])
+            except IndexError:
+                logging.warning(
+                    "Could not extract URL of answer to question with"
+                    " id '{}' in '{}'".format(question['identifier'], url))
         else:
-            question['question']['text'] = question['question']['text'] or ''
-            question['question']['text'] += '\n' + line
+            question['question']['text'] = question['question']['text'] \
+                or []
+            question['question']['text'].append(e_text)
+    else:
+        _commit(question)
 
     await asyncio.gather(parse_qa_index(url))
 
@@ -464,22 +466,14 @@ async def parse_transcript_index(url):
     logging.info('Crawled transcript indices')
 
 
-def _yaml_dump(data, path):
-    """Save a document to disk as YAML."""
-    path = os.path.join(DATA_DIR, path)
-    head = os.path.dirname(path)
-    if not os.path.exists(head):
-        os.makedirs(head)
-    with open(path, 'w') as file:
-        yaml.dump(data, file,
-                  allow_unicode=True, default_flow_style=False)
-
-
 def dump_collection(collection):
     for doc in db[collection].find(projection={'_id': False}):
         filename = doc['_filename']
         del doc['_filename']
-        _yaml_dump(doc, os.path.join(collection, filename))
+        try:
+            yaml_dump(doc, os.path.join(DATA_DIR, collection, filename))
+        except TypeError:
+            print(doc)
 
 if __name__ == '__main__':
     TASKS = {

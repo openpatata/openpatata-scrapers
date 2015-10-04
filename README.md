@@ -8,7 +8,7 @@ git clone https://github.com/openpatata/openpatata-scrapers
 cd openpatata-scrapers
 git clone https://github.com/openpatata/openpatata-data data
 
-brew install icu4c mongodb python3
+brew install icu4c mongodb pandoc python3
 brew link --force icu4c
 
 pyvenv venv
