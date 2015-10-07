@@ -2,8 +2,12 @@
 from collections import OrderedDict
 import os
 
-import pymongo
 import yaml
+
+# Use block style w/ multi-line strings
+yaml.CDumper.add_representer(str, lambda dumper, value: (
+    dumper.represent_scalar('tag:yaml.org,2002:str', value,
+                            style='|' if '\n' in value else None)))
 
 
 def _sort_dicts(val):
@@ -21,8 +25,24 @@ def _sort_dicts(val):
     return val
 
 
-def main():
-    db = pymongo.MongoClient()['openpatata-data']
+def _yaml_dump(data, path):
+    """Save a document to disk as YAML."""
+    head = os.path.dirname(path)
+    if not os.path.exists(head):
+        os.makedirs(head)
+    with open(path, 'w') as file:
+        yaml.dump(data, file, Dumper=yaml.CDumper,
+                  allow_unicode=True, default_flow_style=False)
+
+
+def dump_collection(db, collection, path):
+    """Save an entire collection."""
+    for doc in db[collection].find(projection={'_id': False}):
+        filename = doc.pop('_filename')
+        _yaml_dump(doc, os.path.join(path, collection, filename))
+
+
+def populate_db(db):
     db.command('dropDatabase', 1)
 
     for loc, col in (('./data/bills', 'bills'),
@@ -32,9 +52,6 @@ def main():
                      ('./data/questions', 'questions')):
         for filename in os.scandir(loc):
             with open(filename.path) as file:
-                data = yaml.load(file.read())
+                data = yaml.load(file.read(), Loader=yaml.CLoader)
                 data['_filename'] = filename.name
                 db[col].insert_one(_sort_dicts(data))
-
-if __name__ == '__main__':
-    main()
