@@ -1,9 +1,9 @@
-*openatata-scapers* scrapes the Cypriot parliament. It collects information on
+*openpatata-scapers* scrapes the Cypriot parliament. It collects information on
 plenary sittings, bills and regulations, and questions. Currently, scrapers
 exist for the following: the agendas; written questions; and transcripts (no
 parsing).
 
-*openatata-scapers* requires icu4c, mongodb (2.6+), pandoc, Python (3.5+), and
+*openpatata-scapers* requires icu4c, mongodb (2.6+), pandoc, Python (3.5+), and
 a \*nix environment.
 
 ## Getting set up
@@ -43,4 +43,4 @@ python3 scrape.py dump plenary_sittings data-new
 
 ## License
 
-*openatata-scapers* is licensed under the AGPLv3.
+*openpatata-scapers* is licensed under the AGPLv3.
