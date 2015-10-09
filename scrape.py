@@ -62,6 +62,60 @@ class Translit:
         icu.UTransDirection.FORWARD).transliterate
 
 
+class GlyphNorm:
+
+    """Lazily replace Latin characters within Greek lexemes with their
+    visual Greek equivalents. Parliament keep mixing them up. Somehow.
+    """
+
+    _LATN2GREK_c = ('ABEZHIKMNOPTYXvo',
+                    'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧνο')
+    _LATN2GREK_o = str.maketrans(*_LATN2GREK_c)
+
+    # icu.LocaleData.getExemplarSet([[0, ]1])
+    # (Yes, really, that _is_ the function's signature: a second positional
+    # argument shifts the first one to the right.)
+    #
+    # (0: options) -> icu.USET_IGNORE_SPACE = 1
+    #                 icu.USET_CASE_INSENSITIVE = 2
+    #                 icu.USET_ADD_CASE_MAPPINGS = 4
+    # Mystical transformations. See
+    # https://ssl.icu-project.org/apiref/icu4c/uset_8h.html for the juicy
+    # details.
+    #
+    # (1: extype)  -> icu.ULocaleDataExemplarSetType.ES_STANDARD = 0
+    #                 icu.ULocaleDataExemplarSetType.ES_AUXILIARY = 1
+    #                 icu.ULocaleDataExemplarSetType.ES_INDEX = 2
+    #                 !ULOCDATA_ES_PUNCTUATION = 3
+    #                 !ULOCDATA_ES_COUNT = 4
+    # The icu4c PUNCTUATION and COUNT bitmasks are not exposed (as constants)
+    # in pyicu; use their corresponding ints.
+    # See http://cldr.unicode.org/translation/characters for an explanation of
+    # each of `extype`, and
+    # https://ssl.icu-project.org/apiref/icu4c/ulocdata_8h_source.html#l00041
+    # for their values, if they're ever to change.
+    #
+    # `getExemplarSet` returns an instance of `icu.UnicodeSet`, which can be
+    # cast to a string to produce a matching pattern, in the form of a range
+    # (e.g. `[a-z]`); or to a list to produce a list of all characters
+    # (codepoints) the pattern encapsulates. Alternatively, a `UnicodeSet`
+    # can be consumed by an `icu.UnicodeSetIterator`.
+    _EL_GLYPHS = icu.LocaleData('el').getExemplarSet(2, 0)
+    _EN_GLYPHS = icu.UnicodeSet().addAll(_LATN2GREK_c[0])
+
+    # Match one or more of _LATN2GREK_c[0] if preceded or followed by any
+    # Greek character
+    _S_PATTERN = re.compile(r'(?:(?<={el})({en}+)|({en}+)(?={el}))'.format(
+        el=_EL_GLYPHS, en=_EN_GLYPHS))
+
+    @classmethod
+    def ungarble(cls, garbled_string):
+        """Ungarble a given string."""
+        return cls._S_PATTERN.sub(
+            lambda m: (m.group(1) or m.group(2)).translate(cls._LATN2GREK_o),
+            garbled_string)
+
+
 class NameConverter:
 
     """Transform an MP's name in various ways.
@@ -74,15 +128,19 @@ class NameConverter:
     """
 
     # {'lastname firstname': 'Lastname Firstname', ...}
-    _NAMES_NOM = {Translit.rmd_dc(mp['other_name']): mp['name'] for mp in chain(
-        db.mps.aggregate([{'$project': {
-            'name': '$name.el', 'other_name': '$name.el'}}]),
-        db.mps.aggregate([
-            {'$unwind': '$other_names'},
-            {'$match': {'other_names.note': {'$in': [
-                'Alternative spelling (el-Grek)', 'Short form (el-Grek)']}}},
-            {'$project': {
-                'name': '$name.el', 'other_name': '$other_names.name'}}]))}
+    _NAMES_NOM = {
+        Translit.rmd_dc(mp['other_name']): mp['name']
+        for mp in chain(
+            db.mps.aggregate([
+                {'$project': {
+                    'name': '$name.el', 'other_name': '$name.el'}}]),
+            db.mps.aggregate([
+                {'$unwind': '$other_names'},
+                {'$match': {'other_names.note': {'$in': [
+                    'Alternative spelling (el-Grek)',
+                    'Short form (el-Grek)']}}},
+                {'$project': {
+                    'name': '$name.el', 'other_name': '$other_names.name'}}]))}
 
     _TRANSFORMS_F = (
         # before     after
@@ -123,8 +181,7 @@ class NameConverter:
         """Return a set of all computed names, each having been
         reversed, stripped of its diacritics and downcased.
         """
-        return {Translit.rmd_dc(
-                    ' '.join(reversed([part for part in name])))
+        return {Translit.rmd_dc(' '.join(reversed([part for part in name])))
                 for name in self._names}
 
     @classmethod
@@ -153,10 +210,10 @@ def _parse_long_date(date_string, plenary=False):  # -> 'YYYY-MM-DD'
                           icu.DateFormatSymbols(icu.Locale('el')).getMonths()),
                       range(1, 13)))  # {'ιανουαριος': 1, ...}
     try:
-        d, m, y = re.search(r'(\d{1,2})(?:ης?)?[  ]+(\w+)[  ]+(\d{4})',
+        d, m, y = re.search(r'(\d{1,2})(?:ης?)? (\w+) (\d{4})',
                             date_string).groups()
     except AttributeError:
-        raise ValueError("Date is likely invalid: '{}'".format(date_string))
+        raise ValueError("Unable to parse date '{}'".format(date_string))
     try:
         return '{}-{:02d}-{:02d}'.format(
             *map(int, (y, MONTHS[Translit.rmd_dc(m)], d)))
@@ -180,55 +237,6 @@ def _parse_transcript_date(date_string):  # -> 'YYYY-MM-DD'
     except AttributeError:
         success = False
     return date_string, success
-
-
-def _normalise_glyphs(garbled_string):
-    """Replace Latin characters within Greek lexemes with their visual
-    Greek equivalents. Parliament keep mixing them up. Somehow.
-    """
-    LATN2GREK = {'A': 'Α', 'B': 'Β', 'E': 'Ε', 'Z': 'Ζ', 'H': 'Η',
-                 'I': 'Ι', 'K': 'Κ', 'M': 'Μ', 'N': 'Ν', 'O': 'Ο',
-                 'P': 'Ρ', 'T': 'Τ', 'Y': 'Υ', 'X': 'Χ', 'v': 'ν',
-                 'o': 'ο'}
-
-    def _latn2grek(m):
-        s = [LATN2GREK[c] for c in (m.group(1) or m.group(2))]
-        return ''.join(s)
-
-    # icu.LocaleData.getExemplarSet([[0, ]1])
-    # (Yes, really, that _is_ the function's signature: a second positional
-    # argument shifts the first one to the right.)
-    #
-    # (0: options) -> USET_IGNORE_SPACE = 1
-    #                 USET_CASE_INSENSITIVE = 2
-    #                 USET_ADD_CASE_MAPPINGS = 4
-    # Mystical transformations. See
-    # https://ssl.icu-project.org/apiref/icu4c/uset_8h.html for the juicy
-    # details.
-    # The icu4c bitmasks are not exposed (as constants) in pyicu; use the ints.
-    #
-    # (1: extype)  -> ULOCDATA_ES_STANDARD = 0
-    #                 ULOCDATA_ES_AUXILIARY = 1
-    #                 ULOCDATA_ES_INDEX = 2
-    #                 ULOCDATA_ES_PUNCTUATION = 3
-    #                 ULOCDATA_ES_COUNT = 4
-    # The icu4c bitmasks are not exposed (as constants) in pyicu.
-    # See http://cldr.unicode.org/translation/characters
-    # for an explanation of each of `extype`, and
-    # https://ssl.icu-project.org/apiref/icu4c/ulocdata_8h_source.html#l00041
-    # for their values, if they're ever to change.
-    #
-    # `getExemplarSet` returns an instance of `icu.UnicodeSet`, which can be
-    # cast to a string to produce a matching pattern, in the form of a range
-    # (e.g. `[a-z]`); or to a list to produce a list of all characters
-    # (codepoints) the pattern encapsulates. Alternatively, a `UnicodeSet`
-    # can be consumed by a `icu.UnicodeSetIterator`.
-    el_glyphs = str(icu.LocaleData('el').getExemplarSet(2, 0))
-    en_glyphs = '[{}]'.format(''.join(LATN2GREK))
-
-    return re.sub(
-        r'(?:(?<={0})({1}+)|({1}+)(?={0}))'.format(el_glyphs, en_glyphs),
-        _latn2grek, garbled_string)
 
 
 def _clean_spaces(text):
@@ -279,23 +287,24 @@ def parse_agenda(url, text):
                                        plenary=True)
     plenary['links'] = [{'type': 'agenda', 'url': url}]
 
-    s_subheader = ''.join((e.text_content() for e in html.xpath(
-        '//h1/../following-sibling::*')[:2]))
+    s_subheader = ''.join((
+        _clean_spaces(e.text_content())
+        for e in html.xpath('//h1/../following-sibling::*')[:2]))
     try:
         plenary['parliament'] = re.search(
-            r'(\w)[\'΄][  ]+ΒΟΥΛΕΥΤΙΚΗ[  ]+ΠΕΡΙΟΔΟΣ', s_subheader).group(1)
+            r'(\w)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟΔΟΣ', s_subheader).group(1)
     except AttributeError:
         logging.error("Could not extract parliamentary period"
                       " of '{}' from '{}'".format(url, s_subheader))
     try:
         plenary['session'] = re.search(
-            r'ΣΥΝΟΔΟΣ[  ]+(\w)[\'΄]', s_subheader).group(1)
+            r'ΣΥΝΟΔΟΣ (\w)[\'΄]', s_subheader).group(1)
     except AttributeError:
         logging.error("Could not extract session"
                       " of '{}' from '{}'".format(url, s_subheader))
     try:
         plenary['sitting'] = int(re.search(
-            r'(\d+)[ηή](?:[  ]+)?συνεδρίαση',
+            r'(\d+)[ηή](?: )?συνεδρίαση',
             html.xpath('string(//div[@class="articleBox"])')).group(1))
     except AttributeError:
         logging.error(
@@ -352,7 +361,6 @@ async def process_agenda_index(url):
     await asyncio.gather(*{
         process_agenda_listing(href)
         for href in html.xpath('//a[@class="h3Style"]/@href')})
-    logging.info('Crawled agendas')
 
 
 def parse_qa_listing(url, text):
@@ -361,10 +369,12 @@ def parse_qa_listing(url, text):
     html = lxml.html.document_fromstring(text)
     html.make_links_absolute(url)
 
+    seen = set()
+
     def _extract_qs():
         heading, body, footer = (), [], []
         q_listing = (
-                (e, _normalise_glyphs(_clean_spaces(e.text_content())))
+                (e, GlyphNorm.ungarble(_clean_spaces(e.text_content())))
                 for e in html.xpath('//tr//p'))
         while True:
             e = next(q_listing, None)
@@ -397,16 +407,15 @@ def parse_qa_listing(url, text):
         m = m or re.match(
             r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που υποβλήθηκε από'
             r' (?P<pp>τη|το) βουλευτή (?:εκλογικής περιφέρειας )?\w+'
-            r' κ\. (?P<mp>[\.\-\w’ ]+) (?:την|στις)'
-            r' (?P<date>[\w ]+)', heading[1])
+            r' κ\. (?P<mp>[\.\-\w’ ]+) (?:την|στις) (?P<date>[\w ]+)',
+            heading[1])
         if not m:
             logging.error("Could not parse heading '{}' in '{}'".format(
                 heading[1], url))
             continue
 
         try:
-            question['question']['date'] = _parse_long_date(
-                m.group('date'))
+            question['question']['date'] = _parse_long_date(m.group('date'))
         except ValueError:
             logging.error("Could not convert date of question with id"
                           " '{}' in '{}'".format(question['identifier'], url))
@@ -437,6 +446,13 @@ def parse_qa_listing(url, text):
                     "Could not extract URL of answer to question with"
                     " id '{}' in '{}'".format(question['identifier'], url))
 
+        if question['identifier'] in seen:
+            question = question.compact()
+            logging.warning("Question with id '{}' in '{}' processed"
+                            " repeatedly".format(question['identifier'], url))
+        else:
+            seen.add(question['identifier'])
+
         result = db.questions.find_one_and_update(
             filter={'_filename': question['_filename']},
             update={'$set': question},
@@ -464,7 +480,6 @@ async def process_qa_index(url):
     await asyncio.gather(*{
         process_qa_listing(href)
         for href in html.xpath('//a[contains(@href, "chronological")]/@href')})
-    logging.info("Crawled Q/As")
 
 
 def parse_transcript_listing(url, text):
@@ -504,7 +519,6 @@ async def process_transcript_index(url):
     await asyncio.gather(*{
         process_transcript_listing(href)
         for href in html.xpath('//a[@class="h3Style"]/@href')})
-    logging.info('Crawled transcript indices')
 
 
 TASKS = {
