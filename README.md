@@ -17,6 +17,8 @@ mongodb (2.6+), pandoc, and a \*nix environment.
 
 ### Getting set up
 
+Install all dependencies:
+
 ```bash
 git clone https://github.com/openpatata/openpatata-scrapers
 cd openpatata-scrapers
@@ -36,6 +38,10 @@ And to populate the database:
 python3 scrape.py init
 ```
 
+On Linux distros, the installation of lxml and PyICU is... nerve-racking. You'd
+probably be better off using the system packages. Look for `python3-lxml` and
+`python3-pyicu`.
+
 ### Running the scrapers
 
 To crawl the parliament website:
@@ -52,15 +58,22 @@ To dump a mongo collection:
 python3 scrape.py dump plenary_sittings data-new
 ```
 
+This command will export each individual record in the "plenary_sittings"
+collection to YAML—a both human- and machine-readable data format—within
+`data-new/plenary_sittings`. (This operation is intended to be fully reversible;
+which is to say that the data on disk should be identical to the data in the
+database.) To review the changes between the old and new dataset at a glance,
+run `diff -uarN data/plenary_sittings data-new/plenary_sittings`.
+
 Execute `python3 scrape.py -h` to view a list of all available options.
 
 ## Contributing
 
-There's lots still to be done: setting up unit tests; parsing transcripts into
-a machine-readable format (Akoma Ntoso or similar); extracting MP attendance
-statistics from transcripts; collecting information on former MPs; and much
-more. If you're interested in contributing to the cause, simply open a new
-ticket here on GitHub.
+There's lots still to be done: setting up unit tests and caching; parsing
+transcripts into a machine-readable format (Akoma Ntoso or similar); extracting
+MP attendance statistics from transcripts; collecting information on former MPs;
+and much more. If you're interested in contributing to the cause, simply open a
+new ticket here on GitHub.
 
 ## License
 
