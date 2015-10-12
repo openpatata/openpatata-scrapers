@@ -39,21 +39,20 @@ db = pymongo.MongoClient()['openpatata-data']
 
 
 class Requester:
-
     """Limit concurrent connections to 15 to avoid flooding the server."""
 
     semaphore = asyncio.Semaphore(15)
 
     @classmethod
-    async def get_text(cls, url):
+    async def get_text(cls, url, form_data=None, request_method='get'):
         """Postpone the request until a slot has become available."""
         with await cls.semaphore:
-            response = await aiohttp.get(url)
+            response = await aiohttp.request(request_method, url,
+                                             data=form_data)
             return await response.text()
 
 
 class Translit:
-
     """Stash away our transliterators."""
 
     # Remove diacritics and downcase the input
@@ -63,7 +62,6 @@ class Translit:
 
 
 class GlyphNorm:
-
     """Lazily replace Latin characters within Greek lexemes with their
     visual Greek equivalents. Parliament keep mixing them up. Somehow.
     """
@@ -117,7 +115,6 @@ class GlyphNorm:
 
 
 class NameConverter:
-
     """Transform an MP's name in various ways.
 
     MPs' names in the headings of questions are given in the genitive or
@@ -187,7 +184,7 @@ class NameConverter:
     @classmethod
     @lru_cache()
     def find_match(cls, name, pp):  # -> 'Lastname Firstname' or None
-        """Pair an MP's declined name with their name in the database."""
+        """Pair a declined name with a canonical name in the database."""
         for norm_name in cls(name, pp).names:
             if norm_name in cls._NAMES_NOM:
                 return cls._NAMES_NOM[norm_name]
@@ -196,13 +193,14 @@ class NameConverter:
 def _exec_blocking(func, *args):
     """Execute blocking operations independently of the async loop."""
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, func, *args)
+    return loop.run_in_executor(None, func, *args)
 
 
 def _parse_long_date(date_string, plenary=False):  # -> 'YYYY-MM-DD'
     """Convert a long date in Greek into an ISO date."""
     PLENARY_EXCEPTIONS = {
-        'Συμπληρωματική ημερήσια διάταξη 40-11072013': '2013-07-11'}
+        'Συμπληρωματική ημερήσια διάταξη 40-11072013': '2013-07-11',
+        'Συμπληρωματική Η.Δ. 17ης Συνεδρίας - 12 12 2013': '2013-12-12'}
     if plenary and date_string in PLENARY_EXCEPTIONS:
         return PLENARY_EXCEPTIONS[date_string]
 
@@ -227,16 +225,18 @@ def _parse_transcript_date(date_string):  # -> 'YYYY-MM-DD'
 
     EXCEPTIONS = {
         'http://www2.parliament.cy/parliamentgr/008_01/'
-        '008_02_IC/praktiko2013-12-30.pdf': '2014-01-30'}
+        '008_02_IC/praktiko2013-12-30.pdf': ('2014-01-30',)*2}
     if date_string in EXCEPTIONS:
         return EXCEPTIONS[date_string], success
 
+    m = re.search(r'(\d{4}-\d{2}-\d{2})(?:-(\d))?', date_string.strip())
     try:
-        date_string = re.search(r'(\d{4}-\d{2}-\d{2})',
-                                date_string.strip()).group(1)
+        dates = (m.group(1),
+                 '_'.join(i for i in m.groups() if i is not None))
     except AttributeError:
+        dates = date_string
         success = False
-    return date_string, success
+    return dates, success
 
 
 def _clean_spaces(text):
@@ -249,16 +249,46 @@ def _clean_spaces(text):
 def parse_agenda(url, text):
     """Create plenary records and bills from agendas."""
     html = lxml.html.document_fromstring(text)
+    body_text = _clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
+
+    def _extract_parliament():
+        try:
+            return re.search(r'(\w+)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟΔΟΣ',
+                             body_text).group(1)
+        except AttributeError:
+            logging.error("Could not extract parliamentary period"
+                          " of '{}'".format(url))
+
+    def _extract_session():
+        try:
+            return re.search(r'ΣΥΝΟΔΟΣ (\w+)[\'΄]', body_text).group(1)
+        except AttributeError:
+            logging.error("Could not extract session"
+                          " of '{}'".format(url))
+
+    def _extract_sitting():
+        try:
+            return int(re.search(r'(\d+)[ηή] ?συνεδρίαση',
+                                 body_text).group(1))
+        except AttributeError:
+            logging.error("Could not extract sitting number"
+                          " of '{}'".format(url))
 
     bills = []  # [records.Bill(), ...]
-    plenary = records.PlenarySitting()
+    plenary = records.PlenarySitting(
+        date=_parse_long_date(_clean_spaces(html.xpath('string(//h1)')),
+                              plenary=True),
+        links=[od([('type', 'agenda'), ('url', url)])],
+        parliament=_extract_parliament(),
+        session=_extract_session(),
+        sitting=_extract_sitting())
 
     for e in html.xpath('//div[@class="articleBox"]//tr/td[last()]'):
         try:
             title, *ext, id_ = (_clean_spaces(e.text_content())
                                 for e in e.xpath('*[self::div or self::p]'))
-        # Presumably a faux header; skip it
         except ValueError:
+            # Presumably a faux header; skip it
             continue
         else:
             id_ = [id_] + ext
@@ -283,37 +313,27 @@ def parse_agenda(url, text):
             logging.error("Could not extract document type"
                           " of '{}' in '{}'".format(title, url))
 
-    plenary['date'] = _parse_long_date(html.xpath('string(//h1)'),
-                                       plenary=True)
-    plenary['links'] = [{'type': 'agenda', 'url': url}]
+    # Version sitting filenames from oldest to newest; extraordinary
+    # sittings come last
+    sittings = \
+        {(records.PlenarySitting(**p)['sitting'] or None) for p in
+         db.plenary_sittings.find(filter={'date': plenary['date']})} | \
+        {plenary['sitting'] or None}
+    sittings = sorted(sittings, key=lambda v: float('inf') if v is None else v)
+    for i, sitting in enumerate(sittings):
+        if i:
+            _filename = '{}_{}.yaml'.format(plenary['date'], i+1)
+        else:
+            _filename = '{}.yaml'.format(plenary['date'])
+        if plenary['sitting'] == sitting:
+            plenary['_filename'] = _filename
+        db.plenary_sittings.find_one_and_update(
+            filter={'date': plenary['date'], 'sitting': sitting},
+            update={'$set': {'_filename': _filename}})
 
-    s_subheader = ''.join((
-        _clean_spaces(e.text_content())
-        for e in html.xpath('//h1/../following-sibling::*')[:2]))
-    try:
-        plenary['parliament'] = re.search(
-            r'(\w)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟΔΟΣ', s_subheader).group(1)
-    except AttributeError:
-        logging.error("Could not extract parliamentary period"
-                      " of '{}' from '{}'".format(url, s_subheader))
-    try:
-        plenary['session'] = re.search(
-            r'ΣΥΝΟΔΟΣ (\w)[\'΄]', s_subheader).group(1)
-    except AttributeError:
-        logging.error("Could not extract session"
-                      " of '{}' from '{}'".format(url, s_subheader))
-    try:
-        plenary['sitting'] = int(re.search(
-            r'(\d+)[ηή](?: )?συνεδρίαση',
-            html.xpath('string(//div[@class="articleBox"])')).group(1))
-    except AttributeError:
-        logging.error(
-            "Could not extract sitting number of '{}'".format(url))
-
-    plenary['_filename'] = '{}.yaml'.format(plenary['date'])
     result = db.plenary_sittings.find_one_and_update(
         filter={'_filename': plenary['_filename']},
-        update={'$set': plenary.compact()},
+        update=plenary.compact(),
         upsert=True,
         return_document=pymongo.ReturnDocument.AFTER)
     if not result:
@@ -340,17 +360,31 @@ async def process_agenda(url):
         # Probably a PDF
         logging.error("Could not decode '{}'".format(url))
         return
-    _exec_blocking(parse_agenda, url, text)
+    pages = _exec_blocking(parse_agenda, url, text)
 
 
-async def process_agenda_listing(url):
-    text = await Requester.get_text(url)
+async def process_agenda_listing(url, form_data=None, lpass=1):
+    text = await Requester.get_text(url, form_data=form_data,
+                                    request_method='post')
     html = lxml.html.document_fromstring(text)
     html.make_links_absolute(url)
 
-    await asyncio.gather(*{
-        process_agenda(href)
-        for href in html.xpath('//a[@class="h3Style"]/@href')})
+    if lpass == 1:
+        pagination = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
+        if not pagination:
+            await process_agenda_listing(url, lpass=2)
+        else:
+            await asyncio.gather(*{
+                process_agenda_listing(
+                    url,
+                    form_data={'page': ''.join(c for c in s
+                                               if str.isdigit(c))},
+                    lpass=2)
+                for s in pagination})
+    elif lpass == 2:
+        await asyncio.gather(*{
+            process_agenda(href)
+            for href in html.xpath('//a[@class="h3Style"]/@href')})
 
 
 async def process_agenda_index(url):
@@ -495,11 +529,17 @@ def parse_transcript_listing(url, text):
                           " index at '{}'".format(date, url))
             continue
 
+        if date[0] != date[1] and db.plenary_sittings.find_one(
+                    filter={'_filename': '{}.yaml'.format(date[1])}):
+            date = date[1]
+        else:
+            date = date[0]
+
         result = db.plenary_sittings.find_one_and_update(
             filter={'_filename': '{}.yaml'.format(date)},
             update={'$addToSet': {
                 # Objs need to be arranged in the same (alphabetical)
-                # order to be considered identical, and hence the OrderedDict
+                # order to be considered identical; and hence the OrderedDict
                 'links': od([('type', 'transcript'), ('url', href)])}})
         if not result:
             logging.warning("Could not locate or update plenary for date '{}'"
@@ -521,17 +561,16 @@ async def process_transcript_index(url):
         for href in html.xpath('//a[@class="h3Style"]/@href')})
 
 
-TASKS = {
-    'agendas': (process_agenda_index,
-                'http://www.parliament.cy/easyconsole.cfm/id/290'),
-    'qas': (process_qa_index,
-            'http://www2.parliament.cy/parliamentgr/008_02.htm'),
-    'transcripts': (process_transcript_index,
-                    'http://www.parliament.cy/easyconsole.cfm/id/159')}
-
-
 def main():
     """The CLI."""
+    TASKS = {
+        'agendas': (process_agenda_index,
+                    'http://www.parliament.cy/easyconsole.cfm/id/290'),
+        'qas': (process_qa_index,
+                'http://www2.parliament.cy/parliamentgr/008_02.htm'),
+        'transcripts': (process_transcript_index,
+                        'http://www.parliament.cy/easyconsole.cfm/id/159')}
+
     args = docopt(__doc__)
     if args['init']:
         populate_db(db)

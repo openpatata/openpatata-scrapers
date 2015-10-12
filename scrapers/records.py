@@ -19,7 +19,7 @@ class _Record(dict):
         return dict(_process(o))
 
     @staticmethod
-    def _rm_falsies(o):   # {'a': '', 'b': 12} -> {'b': 12}
+    def _rm_falsies(o):   # {'a': None, 'b': 12} -> {'b': 12}
         # Recursively remove boolean false values from a Record and enclosed
         # lists and list-alikes, returning a copy of the Record
         def _process(o):
@@ -43,6 +43,8 @@ class _Record(dict):
         {'a': {'b': 3}} on {'a': {'b': 1, 'c': 2}}, we'd be overwriting
         `a`, and `c` would've been thrown under the bus. Dot notation is
         how mongo's told to navigate inside `a`.
+
+        This method must be subclassed to construct a mongo insert.
         """
         return self._rm_falsies(self.flatten())
 
@@ -52,8 +54,8 @@ class Bill(_Record):
     def __init__(self, **kwargs):
         super().__init__({
             '_filename': None,
-            'identifier': '',
-            'title': ''}, **kwargs)
+            'identifier': None,
+            'title': None}, **kwargs)
 
 
 class CommitteeReport(_Record):
@@ -62,11 +64,11 @@ class CommitteeReport(_Record):
         super().__init__({
             '_filename': None,
             'belongs_to': [],
-            'date': '',
+            'date': None,
             'mps_present': [],
-            'text': '',
-            'title': '',
-            'url': ''}, **kwargs)
+            'text': None,
+            'title': None,
+            'url': None}, **kwargs)
 
 
 class PlenarySitting(_Record):
@@ -74,14 +76,19 @@ class PlenarySitting(_Record):
     def __init__(self, **kwargs):
         super().__init__({
             '_filename': None,
-            'date': '',
+            'date': None,
             'agenda': {
                 'debate': [],
                 'legislative_work': []},
             'links': [],
-            'parliament': '',
-            'session': '',
-            'sitting': ''}, **kwargs)
+            'parliament': None,
+            'session': None,
+            'sitting': None}, **kwargs)
+
+    def compact(self):
+        val = super().compact()
+        links = val.pop('links')
+        return {'$set': val, '$addToSet': {'links': {'$each': links}}}
 
 
 class Question(_Record):
@@ -90,9 +97,9 @@ class Question(_Record):
         super().__init__({
             '_filename': None,
             'answers': [],
-            'identifier': '',
+            'identifier': None,
             'question': {
               'by': [],
-              'date': '',
+              'date': None,
               'text': [],
-              'title': ''}}, **kwargs)
+              'title': None}}, **kwargs)
