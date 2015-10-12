@@ -98,8 +98,7 @@ class Question(_Record):
             '_filename': None,
             'answers': [],
             'identifier': None,
-            'question': {
-              'by': [],
-              'date': None,
-              'text': [],
-              'title': None}}, **kwargs)
+            'by': [],
+            'date': None,
+            'text': None,
+            'title': None}, **kwargs)

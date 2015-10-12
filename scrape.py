@@ -398,7 +398,11 @@ async def process_agenda_index(url):
 
 
 def parse_qa_listing(url, text):
-    """Create individual question records from a question listing."""
+    """Create individual question records from a question listing.
+
+    TODO: parse multi-MP qs, which might require modifications to
+      `NameConverter`.
+    """
     text = pypandoc.convert(text, 'html5', format='html')
     html = lxml.html.document_fromstring(text)
     html.make_links_absolute(url)
@@ -406,12 +410,14 @@ def parse_qa_listing(url, text):
     seen = set()
 
     def _extract_qs():
-        heading, body, footer = (), [], []
-        q_listing = (
-                (e, GlyphNorm.ungarble(_clean_spaces(e.text_content())))
-                for e in html.xpath('//tr//p'))
+        heading = ()  # (<Element>, '')
+        body = []     # [(<Element>, ''), ...]
+        footer = []
+
+        qs = ((e, GlyphNorm.ungarble(_clean_spaces(e.text_content())))
+              for e in html.xpath('//tr//p'))
         while True:
-            e = next(q_listing, None)
+            e = next(qs, None)
             if not e or e[1].startswith('Ερώτηση με αρ.'):
                 if heading and body:
                     yield heading, body, footer
@@ -430,8 +436,6 @@ def parse_qa_listing(url, text):
                 body.append(e)
 
     for heading, body, footer in _extract_qs():
-        question = records.Question()
-
         m = re.match(
             r'Ερώτηση με αρ\. (?P<id>[\d\.]+),? ημερομηνίας'
             r' (?P<date>[\w ]+),? (?P<pp>της|του) βουλευτ(?:ού|ή)'
@@ -448,41 +452,42 @@ def parse_qa_listing(url, text):
                 heading[1], url))
             continue
 
-        try:
-            question['question']['date'] = _parse_long_date(m.group('date'))
-        except ValueError:
-            logging.error("Could not convert date of question with id"
-                          " '{}' in '{}'".format(question['identifier'], url))
-            continue
-
-        question['_filename'] = '{}.yaml'.format(m.group('id'))
-        question['identifier'] = m.group('id')
-        question['question']['text'] = '\n\n'.join(
-            (p_text for _, p_text in body)).strip()
-        question['question']['title'] = heading[1]
-
-        try:
-            mp = NameConverter.find_match(m.group('mp'), m.group('pp'))
-            if not mp:
-                raise ValueError
-        except ValueError:
-            logging.warning(
-                "Could not insert name '{}' in question with id '{}'"
-                " in '{}'".format(m.group('mp'), m.group('id'), url))
-        else:
-            question['question']['by'].append(mp)
-
-        for a, _ in footer:
+        def _extract_mp():
             try:
-                question['answers'].append(a.xpath('.//a/@href')[0])
-            except IndexError:
+                mp = NameConverter.find_match(m.group('mp'), m.group('pp'))
+                if not mp:
+                    raise ValueError
+            except ValueError:
                 logging.warning(
-                    "Could not extract URL of answer to question with"
-                    " id '{}' in '{}'".format(question['identifier'], url))
+                    "Could not insert name '{}' in question with id '{}'"
+                    " in '{}'".format(m.group('mp'), m.group('id'), url))
+                return []
+            else:
+                return [mp]
+
+        def _extract_answers():
+            for a, _ in footer:
+                try:
+                    a = a.xpath('.//a/@href')[0]
+                except IndexError:
+                    logging.warning(
+                        "Could not extract URL of answer to question with"
+                        " id '{}' in '{}'".format(m.group('id'), url))
+                else:
+                    yield a
+
+        question = records.Question(**{
+            '_filename': '{}.yaml'.format(m.group('id')),
+            'answers': list(_extract_answers()),
+            'by': _extract_mp(),
+            'date': _parse_long_date(m.group('date')),
+            'heading': heading[1],
+            'identifier': m.group('id'),
+            'text': '\n\n'.join(p_text for _, p_text in body).strip()})
 
         if question['identifier'] in seen:
             question = question.compact()
-            logging.warning("Question with id '{}' in '{}' processed"
+            logging.warning("Question with id '{}' in '{}' parsed"
                             " repeatedly".format(question['identifier'], url))
         else:
             seen.add(question['identifier'])
@@ -526,7 +531,7 @@ def parse_transcript_listing(url, text):
             for href in html.xpath('//a[contains(@href, "praktiko")]/@href')):
         if not date_success:
             logging.error("Could not extract date '{}' from transcript"
-                          " index at '{}'".format(date, url))
+                          " listing at '{}'".format(date, url))
             continue
 
         if date[0] != date[1] and db.plenary_sittings.find_one(
