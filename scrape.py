@@ -219,7 +219,7 @@ def _parse_long_date(date_string, plenary=False):  # -> 'YYYY-MM-DD'
         raise ValueError("Malformed month in date '{}'".format(date_string))
 
 
-def _parse_transcript_date(date_string):  # -> 'YYYY-MM-DD'
+def _parse_transcript_date(date_string):  # -> ('YYYY-MM-DD', 'YYYY-MM-DD_C')
     """Extract dates from transcript URLs in the ISO format."""
     success = True
 
@@ -275,13 +275,13 @@ def parse_agenda(url, text):
                           " of '{}'".format(url))
 
     bills = []  # [records.Bill(), ...]
-    plenary = records.PlenarySitting(
-        date=_parse_long_date(_clean_spaces(html.xpath('string(//h1)')),
-                              plenary=True),
-        links=[od([('type', 'agenda'), ('url', url)])],
-        parliament=_extract_parliament(),
-        session=_extract_session(),
-        sitting=_extract_sitting())
+    plenary = records.PlenarySitting(**{
+        'date': _parse_long_date(_clean_spaces(html.xpath('string(//h1)')),
+                                 plenary=True),
+        'links': [od([('type', 'agenda'), ('url', url)])],
+        'parliament': _extract_parliament(),
+        'session': _extract_session(),
+        'sitting': _extract_sitting()})
 
     for e in html.xpath('//div[@class="articleBox"]//tr/td[last()]'):
         try:
@@ -313,8 +313,11 @@ def parse_agenda(url, text):
             logging.error("Could not extract document type"
                           " of '{}' in '{}'".format(title, url))
 
-    # Version sitting filenames from oldest to newest; extraordinary
-    # sittings come last
+    # Version same-day sitting filenames from oldest to newest; extraordinary
+    # sittings come last. We're doing this bit of filename trickery 'cause
+    # (a) it's probably a good idea if the filenames were to persist; and
+    # (b) Parliament similarly version the transcript filenames, meaning
+    # that we can bypass downloading and parsing the PDFs
     sittings = \
         {(records.PlenarySitting(**p)['sitting'] or None) for p in
          db.plenary_sittings.find(filter={'date': plenary['date']})} | \
@@ -357,10 +360,10 @@ async def process_agenda(url):
     try:
         text = await Requester.get_text(url)
     except UnicodeDecodeError:
-        # Probably a PDF
+        # Probably a PDF; we might have to insert those manually
         logging.error("Could not decode '{}'".format(url))
         return
-    pages = _exec_blocking(parse_agenda, url, text)
+    _exec_blocking(parse_agenda, url, text)
 
 
 async def process_agenda_listing(url, form_data=None, lpass=1):
@@ -371,9 +374,7 @@ async def process_agenda_listing(url, form_data=None, lpass=1):
 
     if lpass == 1:
         pagination = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
-        if not pagination:
-            await process_agenda_listing(url, lpass=2)
-        else:
+        if pagination:
             await asyncio.gather(*{
                 process_agenda_listing(
                     url,
@@ -381,6 +382,8 @@ async def process_agenda_listing(url, form_data=None, lpass=1):
                                                if str.isdigit(c))},
                     lpass=2)
                 for s in pagination})
+        else:
+            await process_agenda_listing(url, lpass=2)
     elif lpass == 2:
         await asyncio.gather(*{
             process_agenda(href)
@@ -395,6 +398,14 @@ async def process_agenda_index(url):
     await asyncio.gather(*{
         process_agenda_listing(href)
         for href in html.xpath('//a[@class="h3Style"]/@href')})
+
+
+async def process_committee_report_index(url):
+    raise NotImplementedError
+
+
+async def process_mp_index(*urls):
+    raise NotImplementedError
 
 
 def parse_qa_listing(url, text):
@@ -569,12 +580,22 @@ async def process_transcript_index(url):
 def main():
     """The CLI."""
     TASKS = {
-        'agendas': (process_agenda_index,
-                    'http://www.parliament.cy/easyconsole.cfm/id/290'),
-        'qas': (process_qa_index,
-                'http://www2.parliament.cy/parliamentgr/008_02.htm'),
-        'transcripts': (process_transcript_index,
-                        'http://www.parliament.cy/easyconsole.cfm/id/159')}
+        'agendas': (
+            process_agenda_index,
+            'http://www.parliament.cy/easyconsole.cfm/id/290'),
+        'committee_reports': (
+            process_committee_report_index,
+            'http://www.parliament.cy/easyconsole.cfm/id/220'),
+        'mps': (
+            process_mp_index,
+            'http://www.parliament.cy/easyconsole.cfm/id/186',
+            'http://www.parliament.cy/easyconsole.cfm/id/904'),
+        'qas': (
+            process_qa_index,
+            'http://www2.parliament.cy/parliamentgr/008_02.htm'),
+        'transcripts': (
+            process_transcript_index,
+            'http://www.parliament.cy/easyconsole.cfm/id/159')}
 
     args = docopt(__doc__)
     if args['init']:
