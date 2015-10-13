@@ -6,6 +6,11 @@ class _Record(dict):
 
     """A wrapper for our records."""
 
+    def __init__(self, pro_forma, insert=None):
+        super().__init__(pro_forma)
+        if insert:
+            self.update(insert)
+
     @staticmethod
     def _rekey(o, transform):
         # Recursively apply `transform` on the keys of a Record, returning
@@ -51,16 +56,26 @@ class _Record(dict):
 
 class Bill(_Record):
 
-    def __init__(self, **kwargs):
+    def __init__(self, insert):
         super().__init__({
             '_filename': None,
             'identifier': None,
-            'title': None}, **kwargs)
+            'title': None}, insert)
+
+
+class Committee(_Record):
+
+    def __init__(self, insert):
+        super().__init__({
+            '_filename': None,
+            'name': {
+                'el': None,
+                'en': None}}, insert)
 
 
 class CommitteeReport(_Record):
 
-    def __init__(self, **kwargs):
+    def __init__(self, insert):
         super().__init__({
             '_filename': None,
             'belongs_to': [],
@@ -68,12 +83,12 @@ class CommitteeReport(_Record):
             'mps_present': [],
             'text': None,
             'title': None,
-            'url': None}, **kwargs)
+            'url': None}, insert)
 
 
 class PlenarySitting(_Record):
 
-    def __init__(self, **kwargs):
+    def __init__(self, insert):
         super().__init__({
             '_filename': None,
             'date': None,
@@ -83,7 +98,7 @@ class PlenarySitting(_Record):
             'links': [],
             'parliament': None,
             'session': None,
-            'sitting': None}, **kwargs)
+            'sitting': None}, insert)
 
     def compact(self):
         val = super().compact()
@@ -93,7 +108,7 @@ class PlenarySitting(_Record):
 
 class Question(_Record):
 
-    def __init__(self, **kwargs):
+    def __init__(self, insert):
         super().__init__({
             '_filename': None,
             'answers': [],
@@ -101,4 +116,4 @@ class Question(_Record):
             'by': [],
             'date': None,
             'text': None,
-            'title': None}, **kwargs)
+            'title': None}, insert)

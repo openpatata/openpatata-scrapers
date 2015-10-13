@@ -52,66 +52,43 @@ class Requester:
             return await response.text()
 
 
+def _exec_blocking(func, *args):
+    """Execute blocking operations independently of the async loop."""
+    loop = asyncio.get_event_loop()
+    return loop.run_in_executor(None, func, *args)
+
+
 class Translit:
-    """Stash away our transliterators."""
+    """Stash away our transliterators.
 
-    # Remove diacritics and downcase the input
-    rmd_dc = icu.Transliterator.createInstance(
-        'NFKD; [:nonspacing mark:] any-remove; any-lower',
-        icu.UTransDirection.FORWARD).transliterate
-
-
-class GlyphNorm:
-    """Lazily replace Latin characters within Greek lexemes with their
-    visual Greek equivalents. Parliament keep mixing them up. Somehow.
+    >>> Translit.slugify('Ένα duo 3!')
+    'ena-duo-3'
+    >>> Translit.unaccent_lc('Ένα duo 3!')
+    'ενα duo 3!'
+    >>> Translit.ungarble('Dέλτa')
+    'Δέλτα'
     """
 
-    _LATN2GREK_c = ('ABEZHIKMNOPTYXvo',
-                    'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧνο')
-    _LATN2GREK_o = str.maketrans(*_LATN2GREK_c)
+    # Create filenames and URL slugs from Greek (or any) text by
+    # converting Greek to alphanumeric ASCII; downcasing the input; and
+    # replacing any number of consecutive spaces with a hyphen
+    slugify = icu.Transliterator.createFromRules('slugify', """
+(.*) > &[^[:alnum:][:whitespace:]] any-remove(
+    &any-lower(
+        &Latin-ASCII(
+            &el-Latin($1))));
+::Null;    # Backtrack
+[:whitespace:]+ > \-;""").transliterate
 
-    # icu.LocaleData.getExemplarSet([[0, ]1])
-    # (Yes, really, that _is_ the function's signature: a second positional
-    # argument shifts the first one to the right.)
-    #
-    # (0: options) -> icu.USET_IGNORE_SPACE = 1
-    #                 icu.USET_CASE_INSENSITIVE = 2
-    #                 icu.USET_ADD_CASE_MAPPINGS = 4
-    # Mystical transformations. See
-    # https://ssl.icu-project.org/apiref/icu4c/uset_8h.html for the juicy
-    # details.
-    #
-    # (1: extype)  -> icu.ULocaleDataExemplarSetType.ES_STANDARD = 0
-    #                 icu.ULocaleDataExemplarSetType.ES_AUXILIARY = 1
-    #                 icu.ULocaleDataExemplarSetType.ES_INDEX = 2
-    #                 !ULOCDATA_ES_PUNCTUATION = 3
-    #                 !ULOCDATA_ES_COUNT = 4
-    # The icu4c PUNCTUATION and COUNT bitmasks are not exposed (as constants)
-    # in pyicu; use their corresponding ints.
-    # See http://cldr.unicode.org/translation/characters for an explanation of
-    # each of `extype`, and
-    # https://ssl.icu-project.org/apiref/icu4c/ulocdata_8h_source.html#l00041
-    # for their values, if they're ever to change.
-    #
-    # `getExemplarSet` returns an instance of `icu.UnicodeSet`, which can be
-    # cast to a string to produce a matching pattern, in the form of a range
-    # (e.g. `[a-z]`); or to a list to produce a list of all characters
-    # (codepoints) the pattern encapsulates. Alternatively, a `UnicodeSet`
-    # can be consumed by an `icu.UnicodeSetIterator`.
-    _EL_GLYPHS = icu.LocaleData('el').getExemplarSet(2, 0)
-    _EN_GLYPHS = icu.UnicodeSet().addAll(_LATN2GREK_c[0])
+    # Remove diacritics and downcase the input
+    unaccent_lc = icu.Transliterator.createInstance(
+        'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate
 
-    # Match one or more of _LATN2GREK_c[0] if preceded or followed by any
-    # Greek character
-    _S_PATTERN = re.compile(r'(?:(?<={el})({en}+)|({en}+)(?={el}))'.format(
-        el=_EL_GLYPHS, en=_EN_GLYPHS))
-
-    @classmethod
-    def ungarble(cls, garbled_string):
-        """Ungarble a given string."""
-        return cls._S_PATTERN.sub(
-            lambda m: (m.group(1) or m.group(2)).translate(cls._LATN2GREK_o),
-            garbled_string)
+    # Lazily replace Latin characters within Greek lexemes with their
+    # visual Greek equivalents. Parliament keep mixing them up. Somehow
+    ungarble = icu.Transliterator.createFromRules('ungarble', """
+([:Latin:]+) } [:Greek:] > &Latin-el($1);
+[:Greek:] { ([:Latin:]+) > &Latin-el($1)""").transliterate
 
 
 class NameConverter:
@@ -125,42 +102,36 @@ class NameConverter:
     """
 
     # {'lastname firstname': 'Lastname Firstname', ...}
-    _NAMES_NOM = {
-        Translit.rmd_dc(mp['other_name']): mp['name']
-        for mp in chain(
-            db.mps.aggregate([
-                {'$project': {
-                    'name': '$name.el', 'other_name': '$name.el'}}]),
-            db.mps.aggregate([
-                {'$unwind': '$other_names'},
-                {'$match': {'other_names.note': {'$in': [
-                    'Alternative spelling (el-Grek)',
-                    'Short form (el-Grek)']}}},
-                {'$project': {
-                    'name': '$name.el', 'other_name': '$other_names.name'}}]))}
+    _NAMES_NOM = {Translit.unaccent_lc(mp['other_name']): mp['name'] for mp
+                  in chain(
+        db.mps.aggregate([
+            {'$project': {'name': '$name.el', 'other_name': '$name.el'}}]),
+        db.mps.aggregate([
+            {'$unwind': '$other_names'},
+            {'$match': {'other_names.note': {'$in': [
+                'Alternative spelling (el-Grek)',
+                'Short form (el-Grek)']}}},
+            {'$project': {
+                'name': '$name.el', 'other_name': '$other_names.name'}}]))}
 
     _TRANSFORMS_F = (
-        # before     after
-        [(r'ς$',     r'')],
-        [(r'',       r'')])
+        [(r'ς$', r'')],     # Forenames
+        [(r'',   r'')])     # Surnames; the two must be of equal length
     _TRANSFORMS_M = (
-        [(r'',       r''),
-         (r'$',      r'ς'),
-         (r'ο[υύ]$', r'ος')],
-        [(r'',       r''),
-         (r'$',      r'ς'),
-         (r'ο[υύ]$', r'ος')])
+        [(r'', r''), (r'$', r'ς'), (r'ο[υύ]$', r'ος')],
+        [(r'', r''), (r'$', r'ς'), (r'ο[υύ]$', r'ος')])
 
     _PP2T = {
         'τη':  _TRANSFORMS_F, 'το':  _TRANSFORMS_M,
         'της': _TRANSFORMS_F, 'του': _TRANSFORMS_M}
 
     def __init__(self, name, pp):
+        """For caching purposes, this class' entry point is `find_match`."""
         self._orig_name = re.sub(r'\d', r'',
                                  re.sub(r'’', r'Ά', name))
         self._orig_name = re.findall('\w+', self._orig_name)
         if len(self._orig_name) > 3:
-            raise ValueError("Malformed name: '{}'".format(name))
+            raise ValueError("Malformed name '{}'".format(name))
 
         self._names = [self._orig_name]  # [['Firstname', 'Lastname'], ...]
         self._compute(self._PP2T[pp])
@@ -174,53 +145,105 @@ class NameConverter:
                 re.sub(aft[0], aft[1], surname)])
 
     @property
-    def names(self):  # -> {'lastname firstname', ...}
-        """Return a set of all computed names, each having been
-        reversed, stripped of its diacritics and downcased.
+    def names(self):
+        """Return a set of all computed names.
+
+        Specifically, apply `Translit.unaccent_lc` and reverse-
+        concatenate all names constructed by self._compute.
+
+        >>> (NameConverter('Γιαννάκη Ομήρου', 'του').names ==
+        ...  {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
+        ...   'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'})
+        True
+        >>> (NameConverter('Ροδοθέας Σταυράκου', 'της').names ==
+        ...  {'σταυρακου ροδοθεα', 'σταυρακου ροδοθεας'})
+        True
         """
-        return {Translit.rmd_dc(' '.join(reversed([part for part in name])))
+        return {Translit.unaccent_lc(' '.join(reversed(name)))
                 for name in self._names}
 
     @classmethod
     @lru_cache()
-    def find_match(cls, name, pp):  # -> 'Lastname Firstname' or None
-        """Pair a declined name with a canonical name in the database."""
+    def find_match(cls, name, pp):
+        """Pair a declined name with a canonical name in the database.
+
+        >>> NameConverter.find_match('Γιαννάκη Ομήρου', 'του')
+        'Ομήρου Γιαννάκης'
+        >>> NameConverter.find_match('Δημήτρη Δημητρίου', 'του') is None
+        True
+        >>> NameConverter.find_match('Πέτρου Πέτρου του Πέτρου', 'του')
+        ... # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        ValueError: Malformed name ...
+        """
         for norm_name in cls(name, pp).names:
             if norm_name in cls._NAMES_NOM:
                 return cls._NAMES_NOM[norm_name]
 
 
-def _exec_blocking(func, *args):
-    """Execute blocking operations independently of the async loop."""
-    loop = asyncio.get_event_loop()
-    return loop.run_in_executor(None, func, *args)
+def _parse_long_date(date_string, plenary=False):
+    """Convert a long date in Greek into an ISO date.
 
-
-def _parse_long_date(date_string, plenary=False):  # -> 'YYYY-MM-DD'
-    """Convert a long date in Greek into an ISO date."""
+    >>> _parse_long_date('3 Μαΐου 2014')
+    '2014-05-03'
+    >>> _parse_long_date('03 Μαΐου 2014')
+    '2014-05-03'
+    >>> _parse_long_date('03 μαιου 2014')
+    '2014-05-03'
+    >>> _parse_long_date('Συμπληρωματική ημερήσια διάταξη'
+    ...                  ' 40-11072013')    # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    ValueError: Unable to parse date ...
+    >>> _parse_long_date('Συμπληρωματική ημερήσια διάταξη 40-11072013',
+    ...                  plenary=True)
+    '2013-07-11'
+    >>> _parse_long_date('03 05 2014')      # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    ValueError: Malformed month in date ...
+    >>> _parse_long_date('gibberish')       # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    ValueError: Unable to parse date ...
+    """
     PLENARY_EXCEPTIONS = {
         'Συμπληρωματική ημερήσια διάταξη 40-11072013': '2013-07-11',
         'Συμπληρωματική Η.Δ. 17ης Συνεδρίας - 12 12 2013': '2013-12-12'}
     if plenary and date_string in PLENARY_EXCEPTIONS:
         return PLENARY_EXCEPTIONS[date_string]
 
-    MONTHS = dict(zip(map(Translit.rmd_dc,
+    MONTHS = dict(zip(map(Translit.unaccent_lc,
                           icu.DateFormatSymbols(icu.Locale('el')).getMonths()),
                       range(1, 13)))  # {'ιανουαριος': 1, ...}
     try:
         d, m, y = re.search(r'(\d{1,2})(?:ης?)? (\w+) (\d{4})',
                             date_string).groups()
     except AttributeError:
-        raise ValueError("Unable to parse date '{}'".format(date_string))
+        raise ValueError("Unable to parse date '{}'".format(date_string)) \
+            from None
     try:
         return '{}-{:02d}-{:02d}'.format(
-            *map(int, (y, MONTHS[Translit.rmd_dc(m)], d)))
+            *map(int, (y, MONTHS[Translit.unaccent_lc(m)], d)))
     except KeyError:
-        raise ValueError("Malformed month in date '{}'".format(date_string))
+        raise ValueError("Malformed month in date '{}'".format(date_string)) \
+            from None
 
 
-def _parse_transcript_date(date_string):  # -> ('YYYY-MM-DD', 'YYYY-MM-DD_C')
-    """Extract dates from transcript URLs in the ISO format."""
+def _parse_transcript_date(date_string):
+    """Extract dates and counters from transcript URLs.
+
+    >>> _parse_transcript_date('2013-01-02')
+    (('2013-01-02', '2013-01-02'), True)
+    >>> _parse_transcript_date('2013-01-02-1')
+    (('2013-01-02', '2013-01-02_1'), True)
+    >>> _parse_transcript_date('http://www2.parliament.cy/parliamentgr/008_01/'
+    ...                        '008_02_IC/praktiko2013-12-30.pdf')
+    (('2014-01-30', '2014-01-30'), True)
+    >>> _parse_transcript_date('gibberish')
+    ('gibberish', False)
+    """
     success = True
 
     EXCEPTIONS = {
@@ -240,8 +263,13 @@ def _parse_transcript_date(date_string):  # -> ('YYYY-MM-DD', 'YYYY-MM-DD_C')
 
 
 def _clean_spaces(text):
-    """Convert non-breaking spaces to regular spaces, reduce consecutive
+    """Tidy up whitespace in strings.
+
+    Convert non-breaking spaces to regular spaces, reduce consecutive
     spaces down to one, and strip off leading and trailing whitespace.
+
+    >>> _clean_spaces('  dfsf   ds \\n')
+    'dfsf ds'
     """
     return re.sub(r'[  ]+', ' ', text).strip()
 
@@ -378,8 +406,7 @@ async def process_agenda_listing(url, form_data=None, lpass=1):
             await asyncio.gather(*{
                 process_agenda_listing(
                     url,
-                    form_data={'page': ''.join(c for c in s
-                                               if str.isdigit(c))},
+                    form_data={'page': ''.join(c for c in s if c.isdigit())},
                     lpass=2)
                 for s in pagination})
         else:
@@ -397,6 +424,45 @@ async def process_agenda_index(url):
 
     await asyncio.gather(*{
         process_agenda_listing(href)
+        for href in html.xpath('//a[@class="h3Style"]/@href')})
+
+
+def parse_committee(url, text):
+    """Create bare-bones committee records."""
+    html = lxml.html.document_fromstring(text)
+
+    title = _clean_spaces(html.xpath('string(//h1)')).replace(
+        "'Εσχες", 'Έσχες')   # *sigh*
+    if title.startswith('ΥΠΟΕΠΙΤΡΟΠΕΣ'):
+        logging.debug("Skipping subcommittee listing in '{}'".format(url))
+        return
+
+    committee = records.Committee({
+        '_filename': '{}.yaml'.format(Translit.slugify(title)),
+        'name': {'el': title, 'en': None}})
+
+    result = db.committees.find_one_and_update(
+        filter={'_filename': committee['_filename']},
+        update={'$set': committee},
+        upsert=True,
+        return_document=pymongo.ReturnDocument.AFTER)
+    if not result:
+        logging.warning("Could not insert or update"
+                        " committee '{}'".format(url))
+
+
+async def process_committee(url):
+    text = await Requester.get_text(url)
+    _exec_blocking(parse_committee, url, text)
+
+
+async def process_committee_index(url):
+    text = await Requester.get_text(url)
+    html = lxml.html.document_fromstring(text)
+    html.make_links_absolute(url)
+
+    await asyncio.gather(*{
+        process_committee(href)
         for href in html.xpath('//a[@class="h3Style"]/@href')})
 
 
@@ -425,7 +491,7 @@ def parse_qa_listing(url, text):
         body = []     # [(<Element>, ''), ...]
         footer = []
 
-        qs = ((e, GlyphNorm.ungarble(_clean_spaces(e.text_content())))
+        qs = ((e, Translit.ungarble(_clean_spaces(e.text_content())))
               for e in html.xpath('//tr//p'))
         while True:
             e = next(qs, None)
@@ -532,6 +598,10 @@ async def process_qa_index(url):
         for href in html.xpath('//a[contains(@href, "chronological")]/@href')})
 
 
+async def process_transcript(url):
+    raise NotImplementedError
+
+
 def parse_transcript_listing(url, text):
     """Add links to the transcript PDFs to corresponding plenaries."""
     html = lxml.html.document_fromstring(text)
@@ -586,6 +656,9 @@ def main():
         'committee_reports': (
             process_committee_report_index,
             'http://www.parliament.cy/easyconsole.cfm/id/220'),
+        'committees': (
+            process_committee_index,
+            'http://www.parliament.cy/easyconsole.cfm/id/183'),
         'mps': (
             process_mp_index,
             'http://www.parliament.cy/easyconsole.cfm/id/186',
