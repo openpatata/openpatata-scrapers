@@ -8,6 +8,8 @@ install: pip3 install -r requirements.txt
 cache:
   directories:
   - $HOME/.cache/pip
+services:
+- mongodb
 script: python3 test.py
 notifications:
   email: false
