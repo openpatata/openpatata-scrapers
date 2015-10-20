@@ -112,8 +112,8 @@ class Question(_Record):
         super().__init__({
             '_filename': None,
             'answers': [],
-            'identifier': None,
             'by': [],
             'date': None,
-            'text': None,
-            'title': None}, insert)
+            'heading': None,
+            'identifier': None,
+            'text': None}, insert)
