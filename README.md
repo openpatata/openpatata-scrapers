@@ -11,7 +11,7 @@ of my knowledge, the only user of the data is the
 [openpatata](http://github.com/openpatata/openpatata) website.
 
 *openpatata-scrapers* is written in Python (3.5+). It requires icu4c,
-mongodb (2.6+), pandoc, and a \*nix environment.
+mongodb (2.6+), pandoc, pdftotext (Poppler), and a \*nix environment.
 
 ## Usage instructions
 
@@ -35,7 +35,7 @@ pip3 install -r requirements.txt            # Or python3-pip ...
 And to populate the database:
 
 ```bash
-python3 scrape.py init
+python3 -m scrapers init
 ```
 
 On Linux distros, the installation of lxml and PyICU is... nerve-racking. You'd
@@ -47,15 +47,15 @@ probably be better off using the system packages. Look for `python3-lxml` and
 To crawl the parliament website:
 
 ```bash
-python3 scrape.py run agendas 2> error.log
-python3 scrape.py run transcripts 2>> error.log
-python3 scrape.py run qas 2>> error.log
+python3 -m scrapers run agendas 2> error.log
+python3 -m scrapers run transcript_urls 2>> error.log
+python3 -m scrapers run qas 2>> error.log
 ```
 
 To dump a mongo collection:
 
 ```bash
-python3 scrape.py dump plenary_sittings data-new
+python3 -m scrapers dump plenary_sittings data-new
 ```
 
 This command will export each individual record in the "plenary_sittings"
@@ -65,7 +65,7 @@ which is to say that the data on disk should be identical to the data in the
 database.) To review the changes between the old and new dataset at a glance,
 run `diff -uarN data/plenary_sittings data-new/plenary_sittings`.
 
-Execute `python3 scrape.py -h` to view a list of all available options.
+Execute `python3 -m scrapers -h` to view a list of all available options.
 
 ## Contributing
 

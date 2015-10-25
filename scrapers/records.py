@@ -24,9 +24,10 @@ class _Record(dict):
         return dict(_process(o))
 
     @staticmethod
-    def _rm_falsies(o):   # {'a': None, 'b': 12} -> {'b': 12}
+    def _rm_falsies(o):
         # Recursively remove boolean false values from a Record and enclosed
-        # lists and list-alikes, returning a copy of the Record
+        # lists and list-alikes, returning a copy of the Record:
+        #   {'a': None, 'b': 12} -> {'b': 12}
         def _process(o):
             if isinstance(o, (list, set, tuple)):
                 return [_process(i) for i in o if _process(i)]
@@ -35,13 +36,19 @@ class _Record(dict):
             return o
         return _process(o)
 
-    def flatten(self, t=None):  # {'a': {'b': 1}} -> {'a.b': 1}
-        """Flatten the Record recursively."""
+    def flatten(self, t=None):
+        r"""Flatten the Record recursively.
+
+        >>> _Record({'a': {'b': {'c': [1, 2], 'd': 3}},
+        ...          'e': {'f': ''}}).flatten() == \
+        ... {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''}
+        True
+        """
         return self._rekey(t or self,
                            lambda a, b: '.'.join((a, b)) if a else b)
 
     def compact(self):
-        """Both flatten and `_rm_falsies`.
+        r"""Both flatten and `_rm_falsies`.
 
         This method is useful when updating an existing record, so as to
         not blank nested siblings. To illustrate, if we were to execute
@@ -49,9 +56,15 @@ class _Record(dict):
         `a`, and `c` would've been thrown under the bus. Dot notation is
         how mongo's told to navigate inside `a`.
 
-        This method must be subclassed to construct a mongo insert.
+        >>> _Record({'a': {'b': {'c': 1}}, 'd': {'e': ''}}).compact() == \
+        ... {'a.b.c': 1}
+        True
         """
         return self._rm_falsies(self.flatten())
+
+    def prepare(self):
+        """Subclass to construct a mongo insert."""
+        raise NotImplementedError
 
 
 class Bill(_Record):
@@ -78,9 +91,10 @@ class CommitteeReport(_Record):
     def __init__(self, insert):
         super().__init__({
             '_filename': None,
-            'belongs_to': [],
-            'date': None,
-            'mps_present': [],
+            'attendees': [],
+            'date_circulated': None,
+            'date_prepared': None,
+            'relates_to': [],
             'text': None,
             'title': None,
             'url': None}, insert)
@@ -91,6 +105,7 @@ class PlenarySitting(_Record):
     def __init__(self, insert):
         super().__init__({
             '_filename': None,
+            'attendees': [],
             'date': None,
             'agenda': {
                 'debate': [],
@@ -100,10 +115,13 @@ class PlenarySitting(_Record):
             'session': None,
             'sitting': None}, insert)
 
-    def compact(self):
-        val = super().compact()
+    def prepare(self, compact=True):
+        val = getattr(self, 'compact' if compact else 'flatten')()
         links = val.pop('links')
-        return {'$set': val, '$addToSet': {'links': {'$each': links}}}
+        if links:
+            return {'$set': val, '$addToSet': {'links': {'$each': links}}}
+        else:
+            return {'$set': val}
 
 
 class Question(_Record):
