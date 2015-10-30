@@ -448,3 +448,31 @@ async def process_transcript_index(crawler, url):
     await asyncio.gather(*{
         process_transcript_listing(crawler, href)
         for href in html.xpath('//a[@class="h3Style"]/@href')})
+
+
+TASKS = {
+    'agendas': (
+        process_agenda_index,
+        'http://www.parliament.cy/easyconsole.cfm/id/290'),
+    'committee_reports': (
+        process_committee_report_index,
+        'http://www.parliament.cy/easyconsole.cfm/id/220'),
+    'committees': (
+        process_committee_index,
+        'http://www.parliament.cy/easyconsole.cfm/id/183'),
+    'mps': (
+        process_mp_index,
+        'http://www.parliament.cy/easyconsole.cfm/id/186',
+        'http://www.parliament.cy/easyconsole.cfm/id/904'),
+    'questions': (
+        process_question_index,
+        'http://www2.parliament.cy/parliamentgr/008_02.htm'),
+    'transcript_urls': (
+        process_transcript_index,
+        'http://www.parliament.cy/easyconsole.cfm/id/159'),
+    'transcripts': (
+        process_transcripts,
+        'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IC.htm',
+        'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IDS.htm',
+        'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_ID.htm',
+        'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IE.htm')}
