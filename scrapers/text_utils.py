@@ -39,7 +39,7 @@ class TableParser:
 
     @property
     def _col_modes(self):
-        """The `self._max_cols` most common indices in `self._lines`.
+        """Tuple of the `self._max_cols` most common column indices.
 
         >>> TableParser('''
         ... Lorem ipsum   dolor sit   amet
@@ -80,7 +80,7 @@ class TableParser:
         """
         rows = map(lambda l, c: tuple(map(lambda s: l[s].strip(), c)),
                    self._lines, itertools.repeat(self._col_edges))
-        return filter(all, rows)
+        return filter(any, rows)
 
     @property
     def values(self):
@@ -89,7 +89,7 @@ class TableParser:
         >>> tuple(TableParser('''
         ... Lorem ipsum   dolor sit   amet
         ... consectetur   adipiscing  totes elit
-        ... ''').values)    # doctest: +NORMALIZE_WHITESPACE
+        ... ''').values)     # doctest: +NORMALIZE_WHITESPACE
         ('Lorem ipsum', 'dolor sit',  'amet',
          'consectetur', 'adipiscing', 'totes elit')
         """
