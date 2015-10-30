@@ -49,7 +49,7 @@ To crawl the parliament website:
 ```bash
 python3 -m scrapers run agendas 2> error.log
 python3 -m scrapers run transcript_urls 2>> error.log
-python3 -m scrapers run qas 2>> error.log
+python3 -m scrapers run questions 2>> error.log
 ```
 
 To dump a mongo collection:
