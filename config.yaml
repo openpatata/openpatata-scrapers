@@ -1,0 +1,4 @@
+---
+DB_NAME: openpatata-data
+EXPORT_PATH: ./data-new
+IMPORT_PATH: ./data
