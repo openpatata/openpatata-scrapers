@@ -1,7 +1,7 @@
 
 """Various stand-alone utilities for manipulating text."""
 
-from collections import Counter
+from collections import Counter, namedtuple
 from functools import reduce, lru_cache
 import itertools
 import re
@@ -10,7 +10,7 @@ import subprocess
 import icu
 import Levenshtein
 
-from . import db
+from scrapers import db
 
 
 def pdf2text(stream):
@@ -182,6 +182,7 @@ class NameConverter:
     def _prepare(name):
         """Clean up, normalise and tokenise a name."""
         orig_name = name
+
         name = ''.join(c for c in name if not c.isdigit())
         name = Translit.unaccent_lc(name)
         name = re.findall(r'\w+', name)
@@ -315,27 +316,27 @@ def parse_transcript_date(date_string):
     """Extract dates and counters from transcript URLs.
 
     >>> parse_transcript_date('2013-01-02')
-    (('2013-01-02', '2013-01-02'), True)
+    (Date(date='2013-01-02', slug='2013-01-02'), True)
     >>> parse_transcript_date('2013-01-02-1')
-    (('2013-01-02', '2013-01-02_1'), True)
+    (Date(date='2013-01-02', slug='2013-01-02_1'), True)
     >>> parse_transcript_date('http://www2.parliament.cy/parliamentgr/008_01/'
-    ...                        '008_02_IC/praktiko2013-12-30.pdf')
-    (('2014-01-30', '2014-01-30'), True)
+    ...                       '008_02_IC/praktiko2013-12-30.pdf')
+    (Date(date='2014-01-30', slug='2014-01-30'), True)
     >>> parse_transcript_date('gibberish')
     ('gibberish', False)
     """
+    Date = namedtuple('Date', 'date, slug')
     success = True
 
     EXCEPTIONS = {
         'http://www2.parliament.cy/parliamentgr/008_01/'
         '008_02_IC/praktiko2013-12-30.pdf': ('2014-01-30',)*2}
     if date_string in EXCEPTIONS:
-        return EXCEPTIONS[date_string], success
+        return Date(*EXCEPTIONS[date_string]), success
 
     m = re.search(r'(\d{4}-\d{2}-\d{2})(?:-(\d))?', date_string.strip())
     try:
-        dates = (m.group(1),
-                 '_'.join(i for i in m.groups() if i is not None))
+        dates = Date(m.group(1), '_'.join(filter(bool, m.groups())))
     except AttributeError:
         dates = date_string
         success = False
@@ -388,3 +389,8 @@ def truncate_slug(slug, max_length=100, sep='-'):
         raise ValueError("Initial component of slug '{}' is longer than"
                          " max_length '{}'".format(orig_slug, max_length))
     return slug
+
+
+def apply_subs(orig_string, subs):
+    """Apply a two-tuple list of substitutions to `orig_string`."""
+    return reduce(lambda s, sub: s.replace(*sub), subs, orig_string)
