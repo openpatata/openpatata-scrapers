@@ -1,137 +1,205 @@
-
 """Models for our records."""
+
+from collections import OrderedDict
+import itertools
+
+import pymongo
+
+from scrapers import db
 
 
 class _Record(dict):
+    """A base class for our records."""
 
-    """A wrapper for our records."""
-
-    def __init__(self, pro_forma, insert=None):
-        super().__init__(pro_forma)
-        if insert:
-            self.update(insert)
-
-    @staticmethod
-    def _rekey(o, transform):
-        # Recursively apply `transform` on the keys of a Record, returning
+    def __rekey(self, transform):
+        # Recursively apply `transform` to the keys of a _Record, returning
         # a copy of it
-        def _process(o, pk=''):
-            if isinstance(o, dict):
-                for k in o:
-                    yield from _process(o[k], transform(pk, k))
+        def _inner(value, pk=''):
+            if isinstance(value, dict):
+                for k in value:
+                    yield from _inner(value[k], transform(pk, k))
             else:
-                yield pk, o
-        return dict(_process(o))
+                yield pk, value
+        return _inner(self)
 
-    @staticmethod
-    def _rm_falsies(o):
-        # Recursively remove boolean false values from a Record and enclosed
-        # lists and list-alikes, returning a copy of the Record:
-        #   {'a': None, 'b': 12} -> {'b': 12}
-        def _process(o):
-            if isinstance(o, (list, set, tuple)):
-                return [_process(i) for i in o if _process(i)]
-            elif isinstance(o, dict):
-                return {k: _process(v) for k, v in o.items() if _process(v)}
-            return o
-        return _process(o)
+    def _prepare(self, compact):
+        """Subclass to prepare a _Record for `self.insert`."""
+        return getattr(self, 'compact' if compact else 'flatten')().ordered
 
-    def flatten(self, t=None):
-        r"""Flatten the Record recursively.
+    @property
+    def ordered(self):
+        """Traverse the _Record to sort it and all sub-dicts alphabetically."""
+        new_type = type(type(self).__name__,
+                        (type(self), OrderedDict), {})
 
-        >>> _Record({'a': {'b': {'c': [1, 2], 'd': 3}},
-        ...          'e': {'f': ''}}).flatten() == \
-        ... {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''}
+        def _inner(value):
+            if isinstance(value, dict):
+                return OrderedDict(itertools.starmap(
+                    lambda k, v: (k, _inner(v)), sorted(value.items())))
+            elif isinstance(value, list):
+                return list(map(_inner, value))
+            return value
+        return new_type(_inner(self))
+
+    def flatten(self):
+        r"""Flatten the _Record recursively.
+
+        >>> (_Record({'a': {'b': {'c': [1, 2], 'd': 3}},
+        ...           'e': {'f': ''}}).flatten() ==
+        ...  {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''})
         True
         """
-        return self._rekey(t or self,
-                           lambda a, b: '.'.join((a, b)) if a else b)
+        return type(self)(self.__rekey(lambda a, b: ('.'.join((a, b))
+                                                     if a else b)))
 
     def compact(self):
-        r"""Both flatten and `_rm_falsies`.
+        r"""Filter our booleans `False` values after flattening.
 
         This method is useful when updating an existing record, so as to
-        not blank nested siblings. To illustrate, if we were to execute
-        {'a': {'b': 3}} on {'a': {'b': 1, 'c': 2}}, we'd be overwriting
-        `a`, and `c` would've been thrown under the bus. Dot notation is
-        how mongo's told to navigate inside `a`.
+        not discard nested siblings.
 
-        >>> _Record({'a': {'b': {'c': 1}}, 'd': {'e': ''}}).compact() == \
-        ... {'a.b.c': 1}
+        >>> (_Record({'a': {'b': {'c': 1}}, 'd': {'e': ''}}).compact() ==
+        ...  {'a.b.c': 1})
         True
         """
-        return self._rm_falsies(self.flatten())
+        return type(self)(filter(lambda i: bool(i[1]), self.flatten().items()))
 
-    def prepare(self):
-        """Subclass to construct a mongo insert."""
-        raise NotImplementedError
+    def insert(self,
+               filter=None, compact=False, upsert=True):
+        """Insert a _Record in the database, returning the resulting
+        document or `None`.
+        """
+        return db[self.collection].find_one_and_update(
+            filter or {'_filename': self['_filename']},
+            update=self._prepare(compact), upsert=upsert,
+            return_document=pymongo.ReturnDocument.AFTER)
+
+    def merge(self, filter=None):
+        """Convenience wrapper around `self.insert` for merging."""
+        return self.insert(filter, compact=True, upsert=False)
+
+    @classmethod
+    def from_template(cls, update=None):
+        """Pre-fill a _Record using its template."""
+        value = cls(eval(cls.template))   # Fair bit easier than deep-copying
+        if update:
+            value.update(update)
+        return value
 
 
 class Bill(_Record):
 
-    def __init__(self, insert):
-        super().__init__({
-            '_filename': None,
-            'identifier': None,
-            'title': None}, insert)
+    collection = 'bills'
+    template = """{
+        '_filename': None,
+        'identifier': None,
+        'title': None}"""
+
+    def _prepare(self, compact):
+        value = super()._prepare(compact)
+        return {'$set': value}
 
 
 class Committee(_Record):
 
-    def __init__(self, insert):
-        super().__init__({
-            '_filename': None,
-            'name': {
-                'el': None,
-                'en': None}}, insert)
+    collection = 'committees'
+    template = """{
+        '_filename': None,
+        'name': {
+            'el': None,
+            'en': None}}"""
+
+    def _prepare(self, compact):
+        value = super()._prepare(compact)
+        return {'$set': value}
 
 
 class CommitteeReport(_Record):
 
-    def __init__(self, insert):
-        super().__init__({
-            '_filename': None,
-            'attendees': [],
-            'date_circulated': None,
-            'date_prepared': None,
-            'relates_to': [],
-            'text': None,
-            'title': None,
-            'url': None}, insert)
+    collection = 'committee_reports'
+    template = """{
+        '_filename': None,
+        'attendees': [],
+        'date_circulated': None,
+        'date_prepared': None,
+        'relates_to': [],
+        'text': None,
+        'title': None,
+        'url': None}"""
+
+    def _prepare(self, compact):
+        value = super()._prepare(compact)
+        return {'$set': value}
 
 
 class PlenarySitting(_Record):
 
-    def __init__(self, insert):
-        super().__init__({
-            '_filename': None,
-            'attendees': [],
-            'date': None,
-            'agenda': {
-                'debate': [],
-                'legislative_work': []},
-            'links': [],
-            'parliament': None,
-            'session': None,
-            'sitting': None}, insert)
+    collection = 'plenary_sittings'
+    template = """{
+        '_filename': None,
+        'agenda': {
+            'debate': [],
+            'legislative_work': []},
+        'attendees': [],
+        'date': None,
+        'links': [],
+        'parliament': None,
+        'session': None,
+        'sitting': None}"""
 
-    def prepare(self, compact=True):
-        val = getattr(self, 'compact' if compact else 'flatten')()
-        links = val.pop('links')
-        if links:
-            return {'$set': val, '$addToSet': {'links': {'$each': links}}}
-        else:
-            return {'$set': val}
+    def _version_filename(self, value):
+        # Version same-day sitting filenames from oldest to newest;
+        # extraordinary sittings come last. We're doing this bit of filename
+        # trickery 'cause:
+        # (a) it's probably a good idea if the filenames were to persist; and
+        # (b) Parliament similarly version the transcript filenames, meaning
+        # that we can avoid downloading and parsing the PDFs (for now, anyway)
+        if 'date' not in value:
+            return
+
+        sittings = \
+            {(self.from_template(p)['sitting'] or None) for p in
+             db[self.collection].find(filter={'date': value['date']})} | \
+            {value['sitting'] or None}
+        sittings = sorted(sittings,
+                          key=lambda v: float('inf') if v is None else v)
+        for c, sitting in enumerate(sittings):
+            if c:
+                _filename = '{}_{}.yaml'.format(value['date'], c+1)
+            else:
+                _filename = '{}.yaml'.format(value['date'])
+            db[self.collection].find_one_and_update(
+                filter={'date': value['date'], 'sitting': sitting},
+                update={'$set': {'_filename': _filename}})
+
+            if value['sitting'] == sitting:
+                value['_filename'] = _filename
+
+    def _prepare(self, compact):
+        value = super()._prepare(compact)
+        self._version_filename(value)
+
+        ins = {'$set': value}
+        if compact:
+            links = value.pop('links', None)
+            if links:
+                ins.update({'$addToSet': {'links': {'$each': links}}})
+
+        return ins
 
 
 class Question(_Record):
 
-    def __init__(self, insert):
-        super().__init__({
-            '_filename': None,
-            'answers': [],
-            'by': [],
-            'date': None,
-            'heading': None,
-            'identifier': None,
-            'text': None}, insert)
+    collection = 'questions'
+    template = """{
+        '_filename': None,
+        'answers': [],
+        'by': [],
+        'date': None,
+        'heading': None,
+        'identifier': None,
+        'text': None}"""
+
+    def _prepare(self, compact):
+        value = super()._prepare(compact)
+        return {'$set': value}
