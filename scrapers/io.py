@@ -70,7 +70,7 @@ class YamlManager:
             del doc['_id']
         except KeyError:
             raise DumpError("Unable to extract filename from record with"
-                            " `_id` '{}'".format(doc['_id'])) from None
+                            " `_id` {!r}".format(doc['_id'])) from None
         with open(path, 'w') as file:
             yaml.dump(doc, file,
                       Dumper=_YamlDumper,
