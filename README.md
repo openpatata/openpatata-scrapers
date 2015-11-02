@@ -27,9 +27,9 @@ git clone https://github.com/openpatata/openpatata-data data
 brew install icu4c mongodb pandoc python3   # Or apt-get or dnf or whatever
 brew link --force icu4c
 
-pyvenv venv
+python3 -m venv venv
 source venv/bin/activate
-pip3 install -r requirements.txt            # Or python3-pip ...
+python3 -m pip install -r requirements.txt
 ```
 
 And to populate the database:
@@ -39,7 +39,7 @@ python3 -m scrapers init
 ```
 
 On Linux distros, the installation of lxml and PyICU is... nerve-racking. You'd
-probably be better off using the system packages. Look for `python3-lxml` and
+probably be better off using the system packages: look for `python3-lxml` and
 `python3-pyicu`.
 
 ### Running the scrapers
@@ -47,15 +47,16 @@ probably be better off using the system packages. Look for `python3-lxml` and
 To crawl the parliament website:
 
 ```bash
-python3 -m scrapers run agendas 2> error.log
-python3 -m scrapers run transcript_urls 2>> error.log
+python3 -m scrapers run plenary_agendas 2> error.log
+python3 -m scrapers run plenary_transcript_urls 2>> error.log
+python3 -m scrapers run plenary_attendance 2>> error.log
 python3 -m scrapers run questions 2>> error.log
 ```
 
 To dump a mongo collection:
 
 ```bash
-python3 -m scrapers dump plenary_sittings data-new
+python3 -m scrapers dump plenary_sittings
 ```
 
 This command will export each individual record in the "plenary_sittings"
