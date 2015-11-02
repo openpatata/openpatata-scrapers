@@ -2,6 +2,7 @@
 """Various stand-alone utilities for manipulating text."""
 
 from collections import Counter, namedtuple
+import datetime
 from functools import reduce, lru_cache
 import itertools
 import re
@@ -98,7 +99,7 @@ class TableParser:
            # it(('Lorem ipsum   dolor ...', slice[n]),
            #    ('Lorem ipsum   dolor ...', slice[n+1]), ...)
            itertools.product(self._lines, self._col_edges))
-        return filter(bool, values)
+        return filter(None, values)
 
 
 class Translit:
@@ -336,11 +337,16 @@ def parse_transcript_date(date_string):
 
     m = re.search(r'(\d{4}-\d{2}-\d{2})(?:-(\d))?', date_string.strip())
     try:
-        dates = Date(m.group(1), '_'.join(filter(bool, m.groups())))
+        dates = Date(m.group(1), '_'.join(filter(None, m.groups())))
     except AttributeError:
         dates = date_string
         success = False
     return dates, success
+
+
+def date2dato(date_string):
+    """Convert a clear-text ISO date into a `datetime.date` object."""
+    return datetime.datetime.strptime(date_string, '%Y-%m-%d').date()
 
 
 def clean_spaces(text, medial_newlines=False):
