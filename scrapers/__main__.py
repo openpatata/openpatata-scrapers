@@ -48,9 +48,9 @@ Options:
 
         files = map(lambda f: (f, f.parent.stem),
                     Path(path or config.IMPORT_PATH).glob('[!_]*[!_]/*.yaml'))
-        for file, collection in files:
+        for path, collection in files:
             db[collection].insert_one(
-                io.YamlManager.load_record(str(file), file.name))
+                io.YamlManager.load_record(str(path), path.name))
 
     _init(args['<from_path>'])
 
@@ -66,6 +66,9 @@ Options:
     -h --help       Show this screen
 """
     def _run(task, debug):
+        if task not in TASKS:
+            raise docopt.DocoptExit('Task must to be one of: {}'.format(
+                '; '.join(sorted(TASKS))))
         crawling.Crawler(debug=debug)(TASKS[task][0], *TASKS[task][1:])
 
     _run(args['<task>'], args['--debug'])
@@ -83,8 +86,8 @@ Options:
     def _dump(collection, path):
         collection = db[collection]
         if not collection.count():
-            logger.error("Collection '{}' is empty".format(collection.full_name))
-            return
+            raise docopt.DocoptExit("Collection {!r} is empty".format(
+                collection.full_name))
 
         head = Path(path or config.EXPORT_PATH)/collection.name
         if not head.exists():
@@ -119,7 +122,8 @@ def main():
     try:
         command = _register.__dict__[args['<command>']]
     except KeyError:
-        raise docopt.DocoptExit(__doc__)
+        raise docopt.DocoptExit('Command must to be one of: {}'.format(
+            '; '.join(sorted(_register.__dict__))))
     else:
         args = docopt.docopt(command.__doc__)
         command(args)
