@@ -1,14 +1,13 @@
 
 """Scraping tasks."""
 
-from collections import namedtuple
+from collections import deque, namedtuple
 from functools import reduce
 import itertools
 import logging
-from pathlib import Path
 import re
 
-from scrapers import db, records
+from scrapers import records
 from scrapers.text_utils import (apply_subs,
                                  clean_spaces,
                                  decipher_name,
@@ -21,27 +20,6 @@ from scrapers.text_utils import (apply_subs,
                                  ungarble_qh)
 
 logger = logging.getLogger(__name__)
-
-
-def _select_plenary_date(date):
-    """See if there was a second plenary on the `date`, returning its slug."""
-    if date.date != date.slug and db.plenary_sittings.find_one(
-            filter={'_filename': '{}.yaml'.format(date.slug)}):
-        return date.slug
-    else:
-        return date.date
-
-
-def parse_agenda_bill(url, uid, title):
-    """Create records of bills from agendas."""
-    bill = records.Bill.from_template({
-        '_filename': '{}.yaml'.format(uid),
-        'identifier': uid,
-        'title': title})
-    if not bill.insert():
-        logger.warning(
-            "Unable to insert or update bill with id {!r} and title {!r}"
-            " from {!r}".format(bill['identifier'], bill['title'], url))
 
 
 def parse_agenda(url, html):
@@ -113,6 +91,18 @@ def parse_agenda(url, html):
         parse_agenda_bill(url, uid, title)
 
 
+def parse_agenda_bill(url, uid, title):
+    """Create records of bills from agendas."""
+    bill = records.Bill.from_template({
+        '_filename': '{}.yaml'.format(uid),
+        'identifier': uid,
+        'title': title})
+    if not bill.insert():
+        logger.warning(
+            "Unable to insert or update bill with id {!r} and title {!r}"
+            " from {!r}".format(bill['identifier'], bill['title'], url))
+
+
 async def process_agenda(crawler, url):
     try:
         html = await crawler.get_html(url)
@@ -171,18 +161,16 @@ def parse_question_listing(url, html):
         ('Περδίκη Ερώτηση', 'Ερώτηση'),
         ('φΕρώτηση', 'Ερώτηση')]
 
-    def _extract(html):
+    def _extract():
         """Pin down question boundaries."""
         Element = namedtuple('Element', 'element, text')
 
-        heading = ()  # (<Element>, '')
-        body = []     # [(<Element>, ''), ...]
-        footer = []
-
-        es = itertools.chain((Element(e, clean_spaces(e.text_content()))
-                              for e in html.xpath('//tr//p')),
-                             (Element(..., 'Ερώτηση με αρ.'),))  # Sentinel
-        for e in es:
+        heading = ()      # (<Element>, '')
+        body = deque()    # [(<Element>, ''), ...]
+        footer = deque()
+        for e in itertools.chain((Element(e, clean_spaces(e.text_content()))
+                                  for e in html.xpath('//tr//p')),
+                                 (Element(..., 'Ερώτηση με αρ.'),)):
             norm_text = apply_subs(ungarble_qh(e.text), SUBS)
             if norm_text.startswith('Ερώτηση με αρ.'):
                 if heading and body:
@@ -201,17 +189,6 @@ def parse_question_listing(url, html):
                 body.append(e)
 
     def _parse(heading, body, footer, _seen=set()):
-        # `id` and `date` are required
-        m = re.match(r'Ερώτηση με αρ\. (?P<id>[\d\.]+),? ημερομηνίας'
-                     r' (?P<date>[\w ]+)', heading.text)
-        # Format before 2002 or thereabouts
-        m = m or re.match(r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που .*'
-                          r' (?:την|στις) (?P<date>[\w ]+)', heading.text)
-        if not m:
-            logger.error("Unable to parse heading {!r} in {!r}".format(
-                heading.text, url))
-            return
-
         def _extract_names():
             for name in re.findall(r'((?:[ -][ΆΈ-ΊΌΎΏΑ-ΡΣ-Ϋ][ΐά-ώ]*\.?){2,3})',
                                    heading.text):
@@ -234,6 +211,16 @@ def parse_question_listing(url, html):
                 else:
                     yield a
 
+        m = (re.match(r'Ερώτηση με αρ\. (?P<id>[\d\.]+),? ημερομηνίας'
+                      r' (?P<date>[\w ]+)', heading.text) or
+             # Format before 2002 or thereabouts
+             re.match(r'Ερώτηση με αρ\. (?P<id>[\d\.]+) που .*'
+                      r' (?:την|στις) (?P<date>[\w ]+)', heading.text))
+        if not m:
+            logger.error("Unable to parse heading {!r} in {!r}".format(
+                heading.text, url))
+            return
+
         question = records.Question({
             '_filename': '{}.yaml'.format(m.group('id')),
             'answers': list(_extract_answers()),
@@ -254,7 +241,7 @@ def parse_question_listing(url, html):
             logger.warning("Unable to insert or update question {!r} from"
                            " {!r}".format(question, url))
 
-    for heading, body, footer in _extract(html):
+    for heading, body, footer in _extract():
         _parse(heading, body, footer)
 
 
@@ -314,16 +301,14 @@ def parse_transcript(url, payload):
         # Unwrap the TableParser values
         attendees = itertools.chain.from_iterable(
             map(lambda t: TableParser(t).values, attendee_table))
+        attendees = filter(None, map(_parse_attendee_name, attendees))
         # The President's not listed among the attendees
         #   TODO: former presidents, date ranges, etc.
         if 'ΠΡΟΕΔΡΟΣ:' in text or date in {'2015-04-02_1', '2015-04-02_2'}:
             attendees = itertools.chain(attendees, ('Ομήρου Γιαννάκης',))
+        return sorted(attendees)
 
-        attendees = filter(None, map(_parse_attendee_name, attendees))
-        attendees = sorted(attendees)
-        return attendees
-
-    if Path(url).suffix != '.pdf':
+    if url[-4:] != '.pdf':
         # Crude, but it saves us time
         logger.warning("We are only able to parse PDF transcripts;"
                        " skipping {!r}".format(url))
@@ -335,7 +320,6 @@ def parse_transcript(url, payload):
                      " at {!r}".format(url))
         return
 
-    date = _select_plenary_date(date)
     text = apply_subs(pdf2text(payload), SUBS)
 
     try:
@@ -347,7 +331,8 @@ def parse_transcript(url, payload):
         return
 
     plenary_sitting = records.PlenarySitting.from_template(
-        {'_filename': '{}.yaml'.format(date),
+        {'_filename': '{}.yaml'.format(records.PlenarySitting.select_date(
+            date)),
          'mps_present': _extract_attendees(attendee_table, date, text)})
     if not plenary_sitting.merge():
         logger.warning("Unable to locate or update plenary with"
@@ -378,7 +363,8 @@ def parse_transcript_listing(url, html):
             continue
 
         plenary_sitting = records.PlenarySitting(
-            {'_filename': '{}.yaml'.format(_select_plenary_date(date)),
+            {'_filename': '{}.yaml'.format(records.PlenarySitting.select_date(
+                date)),
              'links': [{'type': 'transcript', 'url': href}]})
         if not plenary_sitting.merge():
             logger.warning(

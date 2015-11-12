@@ -1,3 +1,4 @@
+
 """Models for our records."""
 
 from collections import OrderedDict
@@ -53,7 +54,7 @@ class _Record(dict):
                                                      if a else b)))
 
     def compact(self):
-        r"""Filter our booleans `False` values after flattening.
+        r"""Filter out booleans `False` values after flattening.
 
         This method is useful when updating an existing record, so as to
         not discard nested siblings.
@@ -147,7 +148,7 @@ class PlenarySitting(_Record):
         'session': None,
         'sitting': None}"""
 
-    def _version_filename(self, value):
+    def _version_filename_on_insert(self, value):
         # Version same-day sitting filenames from oldest to newest;
         # extraordinary sittings come last. We're doing this bit of filename
         # trickery 'cause:
@@ -157,10 +158,10 @@ class PlenarySitting(_Record):
         if 'date' not in value:
             return
 
-        sittings = \
+        sittings = (
             {(self.from_template(p)['sitting'] or None) for p in
-             db[self.collection].find(filter={'date': value['date']})} | \
-            {value['sitting'] or None}
+             db[self.collection].find(filter={'date': value['date']})} |
+            {value['sitting'] or None})
         sittings = sorted(sittings,
                           key=lambda v: float('inf') if v is None else v)
         for c, sitting in enumerate(sittings):
@@ -186,6 +187,17 @@ class PlenarySitting(_Record):
                 ins.update({'$addToSet': {'links': {'$each': links}}})
 
         return ins
+
+    @classmethod
+    def select_date(cls, date):
+        """See if there was a second plenary on the `date`, returning its
+        slug.
+        """
+        if date.date != date.slug and db[cls.collection].find_one(
+                filter={'_filename': '{}.yaml'.format(date.slug)}):
+            return date.slug
+        else:
+            return date.date
 
 
 class Question(_Record):
