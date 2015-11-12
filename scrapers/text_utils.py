@@ -48,10 +48,9 @@ class TableParser:
         ... ''')._col_modes
         (0, 14, 26)
         """
-        col_freq = reduce(
-            lambda c, v: c + Counter(dict.fromkeys(self._cols_of(v), 1)),
-            self._lines,
-            Counter({0: float('inf')}))
+        col_freq = reduce(lambda c, v: c + Counter(self._cols_of(v)),
+                          self._lines,
+                          Counter({0: float('inf')}))
         return tuple(sorted(dict(col_freq.most_common(self._max_cols))))
 
     @property
@@ -190,7 +189,7 @@ class NameConverter:
 
         # NameConverter can only handle two- and three-part names
         if not 1 < len(name) <= 3:
-            raise ValueError("Incompatible name '{}'".format(orig_name))
+            raise ValueError('Incompatible name {!r}'.format(orig_name))
         return name
 
     @staticmethod
@@ -261,7 +260,7 @@ def parse_short_date(date_string):
         return '{}-{:02d}-{:02d}'.format(*map(int, reversed(date.groups())))
     except AttributeError:
         raise ValueError(
-            "Unable to disassemble date in '{}'".format(date_string)) from None
+            'Unable to disassemble date in {!r}'.format(date_string)) from None
 
 
 def parse_long_date(date_string, plenary=False):
@@ -304,13 +303,13 @@ def parse_long_date(date_string, plenary=False):
                             date_string).groups()
     except AttributeError:
         raise ValueError(
-            "Unable to disassemble date in '{}'".format(date_string)) from None
+            'Unable to disassemble date in {!r}'.format(date_string)) from None
     try:
         return '{}-{:02d}-{:02d}'.format(
             *map(int, (y, MONTHS[Translit.unaccent_lc(m)], d)))
     except KeyError:
         raise ValueError(
-            "Malformed month in date '{}'".format(date_string)) from None
+            'Malformed month in date {!r}'.format(date_string)) from None
 
 
 def parse_transcript_date(date_string):
@@ -392,8 +391,8 @@ def truncate_slug(slug, max_length=100, sep='-'):
     while len(slug) > max_length:
         slug = slug.rpartition(sep)[0]
     if not slug:
-        raise ValueError("Initial component of slug '{}' is longer than"
-                         " max_length '{}'".format(orig_slug, max_length))
+        raise ValueError('Initial component of slug {!r} is longer than'
+                         ' max_length {!r}'.format(orig_slug, max_length))
     return slug
 
 
