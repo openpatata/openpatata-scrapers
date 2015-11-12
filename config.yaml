@@ -1,4 +1,9 @@
 ---
 DB_NAME: openpatata-data
 EXPORT_PATH: ./data-new
+IMPORT_DIRS:
+- bills
+- mps
+- plenary_sittings
+- questions
 IMPORT_PATH: ./data

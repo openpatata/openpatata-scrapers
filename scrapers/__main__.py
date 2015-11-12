@@ -17,6 +17,7 @@ Options:
     -h --help       Show this screen
 """
 
+import itertools
 import logging
 from pathlib import Path
 
@@ -36,23 +37,27 @@ def _register(fn):
 
 @_register
 def init(args):
-    """Usage: scrapers init [-h] [<from_path>]
+    """Usage: scrapers init [-h] [<from_path> [<import> ...]]
 
-Populate the database <from_path>, defaulting to './data'.
+Populate the database <from_path>, defaulting to './data', and
+enclosing <import> directories.
 
 Options:
     -h --help       Show this screen
 """
-    def _init(path):
+    def _init(import_path, dirs):
         db.command('dropDatabase', 1)
 
-        files = map(lambda f: (f, f.parent.stem),
-                    Path(path or config.IMPORT_PATH).glob('[!_]*[!_]/*.yaml'))
+        files = itertools.chain.from_iterable(map(
+            lambda dir: zip(Path(import_path or config.IMPORT_PATH,
+                                 dir).iterdir(),
+                            itertools.repeat(dir)),
+            dirs or config.IMPORT_DIRS))
         for path, collection in files:
-            db[collection].insert_one(
-                io.YamlManager.load_record(str(path), path.name))
+            db[collection].insert_one(io.YamlManager.load_record(str(path),
+                                                                 path.name))
 
-    _init(args['<from_path>'])
+    _init(args['<from_path>'], args['<import>'])
 
 
 @_register
@@ -86,7 +91,7 @@ Options:
     def _dump(collection, path):
         collection = db[collection]
         if not collection.count():
-            raise docopt.DocoptExit("Collection {!r} is empty".format(
+            raise docopt.DocoptExit('Collection {!r} is empty'.format(
                 collection.full_name))
 
         head = Path(path or config.EXPORT_PATH)/collection.name
