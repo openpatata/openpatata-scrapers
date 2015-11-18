@@ -2,32 +2,26 @@
 """Crawling classes."""
 
 import asyncio
-from urllib.parse import urldefrag
+from collections import namedtuple
 
 import aiohttp
 import gridfs
-import lxml.html
-import pypandoc
+from pymongo import MongoClient
 
-from scrapers import db
+from scrapers import config
+from scrapers.text_utils import parse_html
 
-
-def _parse_html(url, text, clean=False):
-    """Parse HTML into an lxml tree."""
-    if clean:
-        text = pypandoc.convert(text, 'html5', format='html')
-    html = lxml.html.document_fromstring(text)
-    # Infinite loops ahoy
-    html.rewrite_links(lambda s: None if urldefrag(s).url == url else s,
-                       base_href=url)
-    return html
+_CACHE = MongoClient()[config.CACHE_DB_NAME]
+_CACHE = namedtuple('_CACHE', 'file, text')(gridfs.GridFS(_CACHE),
+                                            _CACHE['text'])
 
 
 class Crawler:
-    """An HTTP request pool whatever and a rudimentary persisent cache."""
+    """An async request pool whatever and a rudimentary persisent cache.
 
-    _text_cache = db['_cache']
-    _file_cache = gridfs.GridFS(db)
+    An instance of `Crawler` is passed down the task execution pipeline
+    as each coroutine's first argument.
+    """
 
     def __init__(self, debug=False, max_reqs=15):
         self._debug = debug
@@ -57,7 +51,7 @@ class Crawler:
 
     async def get_text(self, url, form_data=None, request_method='get'):
         """Retrieve the decoded content of `url`."""
-        exists = self._text_cache.find_one(dict(
+        exists = _CACHE.text.find_one(dict(
             url=url, form_data=form_data, request_method=request_method))
         if exists:
             return exists['text']
@@ -67,7 +61,7 @@ class Crawler:
             async with self._session.request(request_method, url,
                                              data=form_data) as response:
                 text = await response.text()
-                self._text_cache.insert_one(dict(
+                _CACHE.text.insert_one(dict(
                     url=url, form_data=form_data,
                     request_method=request_method, text=text))
                 return text
@@ -76,21 +70,25 @@ class Crawler:
                        **kwargs):
         """Retrieve the lxml'ed text content of `url`."""
         text = await self.get_text(url, **kwargs)
-        return await self.exec_blocking(_parse_html, url, text, clean)
+        return await self.exec_blocking(parse_html, url, text, clean)
 
     async def get_payload(self, url):
         """Retrieve the encoded content of `url`."""
-        exists = self._text_cache.find_one(dict(url=url))
+        exists = _CACHE.file.find_one(dict(url=url))
         if exists:
             return exists.read()
 
         async with self._semaphore:
             async with self._session.request('get', url) as response:
                 payload = await response.read()
-                self._file_cache.put(payload, url=url)
+                _CACHE.file.put(payload, url=url)
                 return payload
 
     @classmethod
     def clear_cache(cls):
-        """Clear the text cache."""
-        cls._text_cache.drop()
+        """Clear the cache.
+
+        Manually clear the text cache every so often, in the absence of
+        a mechanism to check whether a document is stale.
+        """
+        _CACHE.text.drop()

@@ -7,26 +7,40 @@ from functools import reduce, lru_cache
 import itertools
 import re
 import subprocess
+from urllib.parse import urldefrag
 
 import icu
 import Levenshtein
+import lxml.html
+import pypandoc
 
 from scrapers import db
 
 
 def pdf2text(stream):
     """Parse a bytes object into a PDF and into text."""
-    text = subprocess.run(['pdftotext', '-layout', '-', '-'],
+    text = subprocess.run(('pdftotext', '-layout', '-', '-'),
                           input=stream, stdout=subprocess.PIPE)
     text = text.stdout.decode(encoding='utf-8')
     return text
+
+
+def parse_html(url, text, clean=False):
+    """Parse HTML into an `lxml` tree."""
+    if clean:
+        text = pypandoc.convert(text, 'html5', format='html')
+    html = lxml.html.document_fromstring(text)
+    # Endless loops ahoy
+    html.rewrite_links(lambda s: None if urldefrag(s).url == url else s,
+                       base_href=url)
+    return html
 
 
 class TableParser:
     """A tool for sifting through plain-text tables."""
 
     def __init__(self, text, max_cols=3):
-        self._lines = [line.lstrip() for line in text.splitlines()]
+        self._lines = tuple(line.lstrip() for line in text.splitlines())
         self._max_cols = max_cols
 
     @staticmethod
@@ -169,38 +183,37 @@ class NameConverter:
             {'$project': {
                 'name': '$name.el', 'other_name': '$other_names.name'}}]))}
 
-    _TRANSFORMS = {
-        'fore': [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος'), (r'ς$', r'')],
-        'aft':  [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος')]}
+    _TRANSFORMS = itertools.product(
+        [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος'), (r'ς$', r'')],  # fore
+        [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος')])                # aft
+    _TRANSFORMS = itertools.starmap(
+        lambda fore, aft: (lambda s: re.compile(fore[0]).sub(fore[1], s),
+                           lambda s: re.compile(aft[0]).sub(aft[1], s)),
+        _TRANSFORMS)
+    _TRANSFORMS = tuple(_TRANSFORMS)  # Can we get some haskell in here?
 
     def __init__(self, name):
         name = self._prepare(name)
-        self._names = itertools.chain([name],
-                                      self._permute(name, self._TRANSFORMS))
+        # NameConverter can only handle two- and three-part names
+        if not 1 < len(name) <= 3:
+            raise ValueError('Incompatible name {!r}'.format(name))
+
+        self._names = itertools.chain(
+            (name,), self._permute(name, self._TRANSFORMS))
 
     @staticmethod
     def _prepare(name):
-        """Clean up, normalise and tokenise a name."""
-        orig_name = name
-
+        """Clean up, normalise and tokenise the `name`."""
         name = ''.join(c for c in name if not c.isdigit())
         name = Translit.unaccent_lc(name)
-        name = re.findall(r'\w+', name)
-
-        # NameConverter can only handle two- and three-part names
-        if not 1 < len(name) <= 3:
-            raise ValueError('Incompatible name {!r}'.format(orig_name))
-        return name
+        return re.findall(r'\w+', name)
 
     @staticmethod
     def _permute(name, transforms):
-        """Apply all combinations of `transforms` to a name."""
+        """Apply all of the `transforms` to a `name`."""
         first, *middle, last = name
-        for fore, aft in itertools.product(transforms['fore'],
-                                           transforms['aft']):
-            yield [re.sub(fore[0], fore[1], first),
-                   *(middle and [re.sub(aft[0], aft[1], middle[0])]),
-                   re.sub(aft[0], aft[1], last)]
+        return ((fore(first), *(middle and (aft(middle[0]),)), aft(last))
+                for fore, aft in transforms)
 
     @property
     def names(self):
@@ -208,10 +221,7 @@ class NameConverter:
 
         >>> (NameConverter('Γιαννάκη Ομήρου').names ==
         ...  {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
-        ...   'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'})
-        True
-        >>> (NameConverter('Ροδοθέας Σταυράκου').names ==
-        ...  {'σταυρακου ροδοθεα', 'σταυρακου ροδοθεας'})
+        ...   'ομηρου γιαννακη',  'ομηρος γιαννακη',  'ομηρος γιαννακης'})
         True
         """
         return {' '.join(reversed(name)) for name in self._names}
