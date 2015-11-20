@@ -193,10 +193,10 @@ class NameConverter:
     _TRANSFORMS = tuple(_TRANSFORMS)  # Can we get some haskell in here?
 
     def __init__(self, name):
-        name = self._prepare(name)
+        orig_name, name = name, self._prepare(name)
         # NameConverter can only handle two- and three-part names
         if not 1 < len(name) <= 3:
-            raise ValueError('Incompatible name {!r}'.format(name))
+            raise ValueError('Incompatible name {!r}'.format(orig_name))
 
         self._names = itertools.chain(
             (name,), self._permute(name, self._TRANSFORMS))
