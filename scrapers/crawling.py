@@ -39,7 +39,7 @@ class Crawler:
         with aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(use_dns_cache=True),
                 loop=self._loop) as self._session:
-            self._loop.run_until_complete(task(self, *task_args))
+            self._loop.run_until_complete(task(self))
 
     async def enqueue(self, tasks):
         """Execute the supplied sub-tasks, aggregating ther return values."""

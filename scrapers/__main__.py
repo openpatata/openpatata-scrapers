@@ -74,7 +74,7 @@ Options:
         if task not in TASKS:
             raise docopt.DocoptExit('Task must to be one of: {}'.format(
                 '; '.join(sorted(TASKS))))
-        crawling.Crawler(debug=debug)(TASKS[task][0], *TASKS[task][1:])
+        crawling.Crawler(debug=debug)(TASKS[task])
 
     _run(args['<task>'], args['--debug'])
 
