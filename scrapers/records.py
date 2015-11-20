@@ -9,6 +9,14 @@ import pymongo
 from scrapers import db
 
 
+class _Unique(type):
+
+    def __new__(cls, *args, **kwargs):
+        cls = super().__new__(cls, *args, **kwargs)
+        cls.seen = set()
+        return cls
+
+
 class _Record(dict):
     """A base class for our records."""
 
@@ -25,7 +33,7 @@ class _Record(dict):
 
     def _prepare(self, compact):
         """Subclass to prepare a _Record for `self.insert`."""
-        return getattr(self, 'compact' if compact else 'flatten')().ordered
+        return getattr(self, 'compact' if compact else 'unwrap')().ordered
 
     @property
     def ordered(self):
@@ -42,11 +50,11 @@ class _Record(dict):
             return value
         return new_type(_inner(self))
 
-    def flatten(self):
+    def unwrap(self):
         r"""Flatten the _Record recursively.
 
         >>> (_Record({'a': {'b': {'c': [1, 2], 'd': 3}},
-        ...           'e': {'f': ''}}).flatten() ==
+        ...           'e': {'f': ''}}).unwrap() ==
         ...  {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''})
         True
         """
@@ -63,7 +71,7 @@ class _Record(dict):
         ...  {'a.b.c': 1})
         True
         """
-        return type(self)(filter(lambda i: bool(i[1]), self.flatten().items()))
+        return type(self)(filter(lambda i: bool(i[1]), self.unwrap().items()))
 
     def insert(self,
                filter=None, compact=False, upsert=True):
@@ -144,11 +152,11 @@ class PlenarySitting(_Record):
         'attendees': [],
         'date': None,
         'links': [],
-        'parliament': None,
+        'parliamentary_period': None,
         'session': None,
         'sitting': None}"""
 
-    def _version_filename_on_insert(self, value):
+    def _version_filename(self, value):
         # Version same-day sitting filenames from oldest to newest;
         # extraordinary sittings come last. We're doing this bit of filename
         # trickery 'cause:
@@ -200,7 +208,8 @@ class PlenarySitting(_Record):
             return date.date
 
 
-class Question(_Record):
+class Question(_Record,
+               metaclass=_Unique):
 
     collection = 'questions'
     template = """{
