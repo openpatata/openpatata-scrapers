@@ -20,6 +20,7 @@ Options:
 import itertools
 import logging
 from pathlib import Path
+from textwrap import dedent
 
 import docopt
 
@@ -31,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 def _register(fn):
     """Super simple registry and registrar."""
+    fn.__doc__ = fn.__doc__.partition('\n')
+    fn.__doc__ = fn.__doc__[:-1] + (dedent(fn.__doc__[-1]),)
+    fn.__doc__ = ''.join(fn.__doc__)
     _register.__dict__[fn.__name__] = fn
     return fn
 
@@ -39,19 +43,19 @@ def _register(fn):
 def init(args):
     """Usage: scrapers init [-h] [<from_path> [<import> ...]]
 
-Populate the database <from_path>, defaulting to './data', and
-enclosing <import> directories.
+    Populate the database <from_path>, defaulting to './data', and
+    enclosing <import> directories.
 
-Options:
-    -h --help       Show this screen
-"""
+    Options:
+        -h --help       Show this screen
+    """
     def _init(import_path, dirs):
         db.command('dropDatabase', 1)
 
         files = itertools.chain.from_iterable(map(
-            lambda dir: zip(Path(import_path or config.IMPORT_PATH,
-                                 dir).iterdir(),
-                            itertools.repeat(dir)),
+            lambda dir: zip(
+                Path(import_path or config.IMPORT_PATH, dir).iterdir(),
+                itertools.repeat(dir)),
             dirs or config.IMPORT_DIRS))
         for path, collection in files:
             db[collection].insert_one(io.YamlManager.load_record(str(path),
@@ -64,12 +68,12 @@ Options:
 def run(args):
     """Usage: scrapers run [-d|-h] <task>
 
-Run a specified scraper task.
+    Run a specified scraper task.
 
-Options:
-    -d --debug      Print asyncio debugging messages to stderr
-    -h --help       Show this screen
-"""
+    Options:
+        -d --debug      Print asyncio debugging messages to stderr
+        -h --help       Show this screen
+    """
     def _run(task, debug):
         if task not in TASKS:
             raise docopt.DocoptExit('Task must to be one of: {}'.format(
@@ -83,14 +87,14 @@ Options:
 def dump(args):
     """Usage: scrapers dump [-h] <collection> [<at_path>]
 
-Dump a <collection> (table) <at_path>, defaulting to './data-new'.
+    Dump a <collection> (table) <at_path>, defaulting to './data-new'.
 
-Options:
-    -h --help       Show this screen
-"""
+    Options:
+        -h --help       Show this screen
+    """
     def _dump(collection, path):
         collection = db[collection]
-        if not collection.count():
+        if collection.count() == 0:
             raise docopt.DocoptExit('Collection {!r} is empty'.format(
                 collection.full_name))
 
@@ -108,18 +112,15 @@ Options:
 
 
 @_register
-def clear_cache(args):
+def clear_cache(_):
     """Usage: scrapers clear_cache [-h]
 
-Clear the crawler's cache.
+    Clear the crawler's cache.
 
-Options:
-    -h --help       Show this screen
-"""
-    def _clear_cache():
-        crawling.Crawler.clear_cache()
-
-    _clear_cache()
+    Options:
+        -h --help       Show this screen
+    """
+    crawling.Crawler.clear_cache()
 
 
 def main():

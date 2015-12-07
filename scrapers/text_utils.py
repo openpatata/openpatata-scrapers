@@ -6,6 +6,7 @@ import datetime
 from functools import reduce, lru_cache
 import itertools
 import re
+import string
 import subprocess
 from urllib.parse import urldefrag
 
@@ -39,9 +40,28 @@ def parse_html(url, text, clean=False):
 class TableParser:
     """A tool for sifting through plain-text tables."""
 
-    def __init__(self, text, max_cols=3):
-        self._lines = tuple(line.lstrip() for line in text.splitlines())
-        self._max_cols = max_cols
+    def __init__(self, text, max_cols=2):
+        self._lines = self._split_lines(text)
+        self._col_modes = self._calc_col_modes(max_cols)
+
+    @staticmethod
+    def _split_lines(text):
+        r"""Split and remove leading whitespace from all lines.
+
+        Additionally, remove blank lines.
+
+        >>> TableParser('''
+        ...
+        ... Lorem ipsum   dolor sit   amet
+        ...
+        ... consectetur   adipiscing  totes elit
+        ...
+        ... ''')._lines         # doctest: +NORMALIZE_WHITESPACE
+        ('Lorem ipsum   dolor sit   amet',
+         'consectetur   adipiscing  totes elit')
+        """
+        lines = (line.lstrip() for line in text.splitlines())
+        return tuple(filter(None, lines))
 
     @staticmethod
     def _cols_of(line):
@@ -52,67 +72,79 @@ class TableParser:
         """
         return tuple(m.end() for m in re.finditer(r'\s{2,}', line))
 
-    @property
-    def _col_modes(self):
-        """Tuple of the `self._max_cols` most common column indices.
+    def _calc_col_modes(self, max_cols):
+        r"""The `self._max_cols` most common column indices in the table.
 
-        >>> TableParser('''
+        >>> TableParser('''\
         ... Lorem ipsum   dolor sit   amet
         ... consectetur   adipiscing  totes elit
-        ... ''')._col_modes
-        (0, 14, 26)
+        ... ''', 3)._col_modes
+        (14, 26)
         """
         col_freq = reduce(lambda c, v: c + Counter(self._cols_of(v)),
-                          self._lines,
-                          Counter({0: float('inf')}))
-        return tuple(sorted(dict(col_freq.most_common(self._max_cols))))
+                          self._lines, Counter())
+        return tuple(sorted(dict(col_freq.most_common(max_cols-1))))
 
-    @property
-    def _col_edges(self):
-        """Generate slices from column indices.
+    @staticmethod
+    def _adjust_col(line, col):
+        """Shift the `col` left if it overlaps a letter."""
+        part = line[:col]
+        if part == line:   # If the trailing cell's empty, take a shortcut
+            return col
 
-        >>> TableParser('''
-        ... Lorem ipsum   dolor sit   amet
-        ... consectetur   adipiscing  totes elit
-        ... ''')._col_edges
-        (slice(0, 14, None), slice(14, 26, None), slice(26, None, None))
+        part = itertools.dropwhile(lambda v: v[1] not in string.whitespace,
+                                   reversed(tuple(enumerate(part))))
+        return next(part)[0]
+
+    @classmethod
+    def _chop_line(cls, line, cols):
+        """Split the `line` at `cols`.
+
+        We assume the leftmost column is flush with the edge of the page
+        'cause it's easier that way.  Misaligned columns are translated to
+        the left.
+
+        >>> TableParser('')._chop_line('Lorem ipsum   dolor sit   amet',
+        ...                            (14, 26))
+        ('Lorem ipsum', 'dolor sit', 'amet')
+        >>> TableParser('')._chop_line('Lorem ipsum   dolor sit   amet',
+        ...                            (16, 26))  # col '16' overlaps 'dolor'
+        ('Lorem ipsum', 'dolor sit', 'amet')
         """
-        cols = self._col_modes
-        cols = itertools.zip_longest(cols, cols[1:])
-        return tuple(itertools.starmap(slice, cols))
+        cols = tuple(itertools.chain((0,), map(cls._adjust_col,
+                                               itertools.repeat(line), cols)))
+        cols = itertools.starmap(slice, itertools.zip_longest(cols, cols[1:]))
+        return tuple(map(lambda line, slice_: line[slice_].strip(),
+                         itertools.repeat(line), cols))
 
     @property
     def rows(self):
-        """Produce a cols within a row matrix, sans any blank rows.
+        r"""Produce a cols within a row matrix, sans any blank rows.
 
-        >>> tuple(TableParser('''
+        >>> TableParser('''\
         ... Lorem ipsum   dolor sit   amet
         ... consectetur   adipiscing  totes elit
-        ... ''').rows)       # doctest: +NORMALIZE_WHITESPACE
+        ... ''', 3).rows       # doctest: +NORMALIZE_WHITESPACE
         (('Lorem ipsum', 'dolor sit',  'amet'),
          ('consectetur', 'adipiscing', 'totes elit'))
         """
-        rows = map(lambda l, c: tuple(map(lambda s: l[s].strip(), c)),
-                   self._lines, itertools.repeat(self._col_edges))
-        return filter(any, rows)
+        rows = map(self._chop_line,
+                   self._lines, itertools.repeat(self._col_modes))
+        return tuple(filter(any, rows))
 
     @property
     def values(self):
-        """Parse all values linearly, sans any empty strings.
+        r"""Parse all values linearly, sans any empty strings.
 
-        >>> tuple(TableParser('''
+        >>> TableParser('''\
         ... Lorem ipsum   dolor sit   amet
         ... consectetur   adipiscing  totes elit
-        ... ''').values)     # doctest: +NORMALIZE_WHITESPACE
+        ... ''', 3).values     # doctest: +NORMALIZE_WHITESPACE
         ('Lorem ipsum', 'dolor sit',  'amet',
          'consectetur', 'adipiscing', 'totes elit')
         """
-        values = itertools.starmap(
-           lambda l, c: l[c].strip(),
-           # it(('Lorem ipsum   dolor ...', slice[n]),
-           #    ('Lorem ipsum   dolor ...', slice[n+1]), ...)
-           itertools.product(self._lines, self._col_edges))
-        return filter(None, values)
+        values = itertools.chain.from_iterable(self.rows)
+        return tuple(filter(None, values))
 
 
 class Translit:
@@ -154,7 +186,7 @@ def ungarble_qh(text, _LATN2GREK=str.maketrans('’ABEZHIKMNOPTYXvo',
 def decipher_name(name,
                   _MPS=[mp['name']['el']
                         for mp in db.mps.find(projection={'name.el': 1})]):
-    """Pair a jumbled up name with a canonical name in the database.
+    """Pair a jumbled up MP name with a canonical name in the database.
 
     >>> decipher_name('Καπθαιηάο Αληξέαο')   # Jesus take the wheel
     'Καυκαλιάς Αντρέας'
@@ -162,8 +194,8 @@ def decipher_name(name,
     True
     """
     try:
-        return min(((Levenshtein.hamming(name, i), i) for i in _MPS
-                    if len(i) == len(name)))[1]
+        return min((Levenshtein.hamming(name, i), i) for i in _MPS
+                   if len(i) == len(name))[1]
     except ValueError:
         return
 
@@ -180,8 +212,8 @@ class NameConverter:
         db.mps.aggregate([
             {'$unwind': '$other_names'},
             {'$match': {'other_names.note': re.compile('el-Grek')}},
-            {'$project': {
-                'name': '$name.el', 'other_name': '$other_names.name'}}]))}
+            {'$project': {'name': '$name.el',
+                          'other_name': '$other_names.name'}}]))}
 
     _TRANSFORMS = itertools.product(
         [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος'), (r'ς$', r'')],  # fore
@@ -190,7 +222,7 @@ class NameConverter:
         lambda fore, aft: (lambda s: re.compile(fore[0]).sub(fore[1], s),
                            lambda s: re.compile(aft[0]).sub(aft[1], s)),
         _TRANSFORMS)
-    _TRANSFORMS = tuple(_TRANSFORMS)  # Can we get some haskell in here?
+    _TRANSFORMS = tuple(_TRANSFORMS)
 
     def __init__(self, name):
         orig_name, name = name, self._prepare(name)
@@ -244,9 +276,9 @@ class NameConverter:
             ...
         ValueError: Incompatible name 'a b c d'
         """
-        for norm_name in cls(name).names:
-            if norm_name in cls._NAMES_NOM:
-                return cls._NAMES_NOM[norm_name]
+        match = cls(name).names & cls._NAMES_NOM.keys()
+        if match:
+            return cls._NAMES_NOM[match.pop()]
 
 
 def parse_short_date(date_string):
@@ -283,12 +315,12 @@ def parse_long_date(date_string, plenary=False):
     >>> parse_long_date('03 μαιου 2014')
     '2014-05-03'
     >>> parse_long_date('Συμπληρωματική ημερήσια διάταξη'
-    ...                  ' 40-11072013')    # doctest: +ELLIPSIS
+    ...                 ' 40-11072013')    # doctest: +ELLIPSIS
     Traceback (most recent call last):
         ...
     ValueError: Unable to disassemble date in ...
     >>> parse_long_date('Συμπληρωματική ημερήσια διάταξη 40-11072013',
-    ...                  plenary=True)
+    ...                 plenary=True)
     '2013-07-11'
     >>> parse_long_date('03 05 2014')      # doctest: +ELLIPSIS
     Traceback (most recent call last):
@@ -377,21 +409,21 @@ def truncate_slug(slug, max_length=100, sep='-'):
     """Truncate a slug for `max_length`, but keep whole words intact.
 
     >>> truncate_slug(Translit.slugify('bir iki üç'),
-    ...                max_length=2)    # doctest: +ELLIPSIS
+    ...               max_length=2)    # doctest: +ELLIPSIS
     Traceback (most recent call last):
         ...
     ValueError: Initial component of slug ... is longer than max_length ...
     >>> truncate_slug(Translit.slugify('bir iki üç'),
-    ...                max_length=6)
+    ...               max_length=6)
     'bir'
     >>> truncate_slug(Translit.slugify('bir iki üç'),
-    ...                max_length=7)
+    ...               max_length=7)
     'bir-iki'
     >>> truncate_slug(Translit.slugify('bir iki üç'),
-    ...                max_length=9)
+    ...               max_length=9)
     'bir-iki'
     >>> truncate_slug(Translit.slugify('bir iki üç'),
-    ...                max_length=10)
+    ...               max_length=10)
     'bir-iki-uc'
     >>> truncate_slug(Translit.slugify('bir iki üç'))
     'bir-iki-uc'
@@ -399,10 +431,10 @@ def truncate_slug(slug, max_length=100, sep='-'):
     orig_slug = slug
 
     while len(slug) > max_length:
-        slug = slug.rpartition(sep)[0]
+        slug, _, _ = slug.rpartition(sep)
     if not slug:
         raise ValueError('Initial component of slug {!r} is longer than'
-                         ' max_length {!r}'.format(orig_slug, max_length))
+                         ' `max_length` {!r}'.format(orig_slug, max_length))
     return slug
 
 

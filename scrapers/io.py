@@ -66,7 +66,7 @@ class YamlManager:
     def dump_record(doc, head):
         """Save a database record to disk."""
         try:
-            path = os.path.join(head, doc.pop('_filename'))
+            path = os.path.join(head, doc.pop('_filename')) + '.yaml'
             del doc['_id']
         except KeyError:
             raise DumpError('Unable to extract filename from record with'
