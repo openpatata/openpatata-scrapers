@@ -89,10 +89,6 @@ class _Record(dict):
         """Convenience wrapper around `self.insert` for merging."""
         return self.insert(filter_, compact=True, upsert=False)
 
-    @property
-    def _filename(self):
-        return self['_filename']
-
     @classmethod
     def from_template(cls, _filename=None, update=None):
         """Pre-fill a _Record using its template."""
@@ -113,6 +109,7 @@ class Bill(_Record):
 
     def _prepare(self, compact):
         value = super()._prepare(compact)
+        value['_filename'] = value['identifier']
         return {'$set': value}
 
 
@@ -130,17 +127,20 @@ class CommitteeReport(_Record):
 
     def _construct_filename(self, value):
         slug = truncate_slug(Translit.slugify(value['title']))
-        other = db.committee_reports.count(
-            {'_filename': re.compile(r'{}(_\d+)?'.format(slug)),
-             'url': {'$ne': value['url']}})
+
+        other = db.committee_reports.find_one({'url': value['url']})
         if other:
-            value['_filename'] = '{}_{}'.format(slug, other+1)
+            return other['_filename']
+        other = db.committee_reports.count(
+            {'_filename': re.compile(r'{}(_\d+)?'.format(slug))})
+        if other:
+            return '{}_{}'.format(slug, other+1)
         else:
-            value['_filename'] = slug
+            return slug
 
     def _prepare(self, compact):
         value = super()._prepare(compact)
-        self._construct_filename(value)
+        value['_filename'] = self._construct_filename(value)
         return {'$set': value}
 
 

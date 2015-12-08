@@ -44,8 +44,8 @@ class PlenaryAttendance(Task):
                            ' skipping {!r}'.format(url))
             return
 
-        text = await self.exec_blocking(pdf2text,
-                                        await self.crawler.get_payload(url))
+        text = await self.crawler.exec_blocking(
+            pdf2text, await self.crawler.get_payload(url))
         await self.crawler.exec_blocking(parse_transcript, url, text)
 
 
@@ -113,10 +113,10 @@ def parse_transcript(url, text):
 
     plenary_sitting = PlenarySitting.from_template(
         PlenarySitting.select_date(date),
-        {'mps_present': _parse_attendees(attendee_table, date, text, url)})
+        {'attendees': _parse_attendees(attendee_table, date, text, url)})
     if not plenary_sitting.merge():
         logger.warning('Unable to locate or update plenary with'
-                       ' filename {!r}'.format(plenary_sitting._filename))
+                       ' filename {!r}'.format(plenary_sitting['_filename']))
 
 
 class PlenaryTranscriptUrls(Task):
@@ -153,4 +153,4 @@ def parse_transcript_listing(url, html):
         if not plenary_sitting.merge():
             logger.warning(
                 'Unable to insert transcript with URL {!r} in plenary with'
-                ' filename {!r}'.format(url, plenary_sitting._filename))
+                ' filename {!r}'.format(url, plenary_sitting['_filename']))

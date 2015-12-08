@@ -24,8 +24,8 @@ class CommitteeReports(Task):
         committee_reports = itertools.chain.from_iterable(committee_reports)
         await self.crawler.gather(
             {self.crawler.exec_blocking(parse_committee_report,
-                                        url, date, item)
-             for date, item in committee_reports})
+                                        url, *committee_report)
+             for committee_report in committee_reports})
 
     __call__ = process_committee_report_index
 
@@ -55,5 +55,5 @@ def parse_committee_report(url, date, item):
                                medial_newlines=True),
          'url': item.xpath('.//a[1]/@href')[0]})
     if not committee_report.insert():
-        logger.error('Unable to insert or update'
-                     ' committee report {}'.format(committee_report))
+        logger.error('Unable to insert or update committee report'
+                     ' {} in {!r}'.format(committee_report, url))

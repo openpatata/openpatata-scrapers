@@ -8,7 +8,7 @@ import yaml
 
 
 class DumpError(Exception):
-    """Exception raised by `YamlManager`."""
+    """Exception raised by `*Manager`s."""
 
 
 class _YamlConstructor(yaml.constructor.SafeConstructor):

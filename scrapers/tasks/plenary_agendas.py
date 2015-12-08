@@ -133,8 +133,9 @@ def parse_agenda(url, html):
 
 
 def parse_agenda_bill(url, uid, title):
-    bill = Bill.from_template(uid, {'identifier': uid, 'title': title})
+    bill = Bill.from_template(
+        None,
+        {'identifier': uid, 'title': title})
     if not bill.insert():
-        logger.warning(
-            'Unable to insert or update bill with id {!r} and title'
-            ' {!r} from {!r}'.format(bill['identifier'], bill['title'], url))
+        logger.warning('Unable to insert or update bill {}'
+                       ' in {!r}'.format(bill, url))

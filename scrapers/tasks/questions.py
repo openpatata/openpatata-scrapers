@@ -20,8 +20,8 @@ class Questions(Task):
 
     name = 'questions'
 
-    async def process_question_index(
-            self, url='http://www2.parliament.cy/parliamentgr/008_02.htm'):
+    async def process_question_index(self, url=None):
+        url = url or 'http://www2.parliament.cy/parliamentgr/008_02.htm'
         html = await self.crawler.get_html(url)
         await self.crawler.gather(
             {self.process_question_listing(href) for href in
@@ -32,7 +32,9 @@ class Questions(Task):
     async def process_question_listing(self, url):
         html = await self.crawler.get_html(url, clean=True)
         await self.process_question_index(url)
-        await self.crawler.exec_blocking(parse_question_listing, url, html)
+        await self.crawler.gather(
+           {self.crawler.exec_blocking(parse_question, url, *question)
+            for question in _extract_questions_from_listing(url, html)})
 
 
 RE_HF1 = re.compile(
@@ -48,7 +50,7 @@ SUBS = [('-Ερώτηση', 'Ερώτηση'),
         ('φΕρώτηση', 'Ερώτηση')]
 
 
-def _extract_questions(url, html):
+def _extract_questions_from_listing(url, html):
     """Pin down question boundaries."""
     Element = namedtuple('Element', 'element, text')
 
@@ -68,8 +70,8 @@ def _extract_questions(url, html):
                                ' {!r}'.format((heading, body, footer), url))
 
             heading = Element(e.element, norm_text)
-            body.clear()
-            footer.clear()
+            body = []
+            footer = []
         elif norm_text.startswith('Απάντηση'):
             footer.append(e)
         else:
@@ -77,15 +79,12 @@ def _extract_questions(url, html):
 
 
 def _parse_names(url, heading):
-    def inner():
-        for name in RE_HNAMES.findall(heading.text):
-            match = NameConverter.find_match(name)
-            if not match:
-                logger.warning('No match found for name {!r} in heading'
-                               ' {!r} in {!r}'.format(name, heading.text, url))
-                continue
-            yield match
-    return list(inner())
+    names = RE_HNAMES.findall(heading.text)
+    names = \
+        (NameConverter.find_match(name) or logger.warning(
+             'No match found for name {!r} in heading {!r}'
+             ' in {!r}'.format(name, heading.text, url)) for name in names)
+    return list(filter(None, names))
 
 
 def _parse_answers(url, footer, id_):
@@ -101,30 +100,33 @@ def _parse_answers(url, footer, id_):
     return list(inner())
 
 
-def parse_question_listing(url, html):
-    for heading, body, footer in _extract_questions(url, html):
-        match = RE_HF1.match(heading.text) or RE_HF2.match(heading.text)
-        if not match:
-            logger.error('Unable to parse heading {!r}'
-                         ' in {!r}'.format(heading.text, url))
-            continue
+def _construct_filename(url, id_):
+    counter = 1
+    filename = id_
+    while filename in Question.seen:
+        counter += 1
+        filename = '{}_{}'.format(id_, counter)
+        logger.warning('Question with filename {!r} in {!r} parsed'
+                       ' repeatedly'.format(id_, url))
+    Question.seen.add(filename)
+    return filename
 
-        question = Question.from_template(
-            match.group('id'),
-            {'answers': _parse_answers(url, footer, match.group('id')),
-             'by': _parse_names(url, heading),
-             'date': parse_long_date(match.group('date')),
-             'heading': heading.text.rstrip('.'),
-             'identifier': match.group('id'),
-             'text': '\n\n'.join(i.text for i in body).strip()})
-        if question._filename in Question.seen:
-            result = question.merge()
-            logger.warning('Question with filename {!r} in {!r} parsed'
-                           ' repeatedly'.format(question._filename, url))
-        else:
-            result = question.insert()
-            Question.seen.add(question._filename)
 
-        if not result:
-            logger.warning('Unable to insert or update question {!r} from'
-                           ' {!r}'.format(question, url))
+def parse_question(url, heading, body, footer):
+    match = RE_HF1.match(heading.text) or RE_HF2.match(heading.text)
+    if not match:
+        logger.error('Unable to parse heading {!r}'
+                     ' in {!r}'.format(heading.text, url))
+        return
+
+    question = Question.from_template(
+        _construct_filename(url, match.group('id')),
+        {'answers': _parse_answers(url, footer, match.group('id')),
+         'by': _parse_names(url, heading),
+         'date': parse_long_date(match.group('date')),
+         'heading': heading.text.rstrip('.'),
+         'identifier': match.group('id'),
+         'text': '\n\n'.join(i.text for i in body).strip()})
+    if not question.insert():
+        logger.warning('Unable to insert or update question {!r}'
+                       ' in {!r}'.format(question, url))
