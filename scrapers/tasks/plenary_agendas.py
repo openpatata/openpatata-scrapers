@@ -135,26 +135,22 @@ RE_PAGENO = re.compile(r'^ +\d+\n')
 RE_TITLE_OTHER = re.compile(r'\(Πρόταση νόμου[^\)]*\)')
 
 
-def _select_item(url, item):
-    key = item[0]
-    if RE_ID.search(key):
-        return True
-    return logger.warning('Unable to extract document type'
-                          ' of {} in {!r}'.format(item, url))
-
-
-def _clean_item(key, value):
-    return RE_ID.search(key).group(1), \
-           RE_TITLE_OTHER.sub('', ' '.join(value)).rstrip('. ')
-
-
 def parse_pdf_agenda(url, text):
     def _group_by_key(key, _store=[None]):
+        # Return a previous valid key until a new valid key is found
         if not key[0]:
             return _store[0]
         else:
             _store[0] = key[0]
             return _store[0]
+
+    def _prepare_item(key, value):
+        id_ = RE_ID.search(key)
+        if not id_:
+            return logger.warning('Unable to extract document type of {}'
+                                  ' in {!r}'.format((key, value), url))
+        return (id_.group(1),
+                RE_TITLE_OTHER.sub('', ' '.join(value)).rstrip('. '))
 
     if (url == 'http://www.parliament.cy/images/media/redirectfile/13-0312015-'
                ' agenda ΤΟΠΟΘΕΤΗΣΕΙΣ doc.pdf'):
@@ -164,14 +160,19 @@ def parse_pdf_agenda(url, text):
 
     pages = text.split('\x0c')
     rows = itertools.chain.from_iterable(
+        # Get rid of the page numbers first
         TableParser(RE_PAGENO.sub('', page), 2).rows for page in pages)
 
+    # Parse the pages into an array of agenda items, grouped by their list
+    # number, each containing an array of table rows
     agenda_items = (tuple(x[-1] for x in v)
                     for _, v in itertools.groupby(rows, key=_group_by_key))
+    # Pop from the end of the list to create a two-tuple; the assumption's
+    # that the bottom line contains the item's id
     agenda_items = ((v[-1], v[:-1]) for v in agenda_items)
-    agenda_items = itertools.starmap(_clean_item,
-                                     filter(lambda i: _select_item(url, i),
-                                            agenda_items))
+    # Concatenate the rows into a string, extract the id from the key,
+    # and throw out the junk
+    agenda_items = filter(None, itertools.starmap(_prepare_item, agenda_items))
     agenda_items = odict(agenda_items)
 
     bills = odict((k, v) for k, v in agenda_items.items()
