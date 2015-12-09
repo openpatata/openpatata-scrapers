@@ -6,7 +6,8 @@ import re
 
 from scrapers.crawling import Task
 from scrapers.records import Bill, PlenarySitting
-from scrapers.text_utils import clean_spaces, parse_long_date
+from scrapers.text_utils import (clean_spaces, parse_long_date, pdf2text,
+                                 TableParser)
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +50,13 @@ class PlenaryAgendas(Task):
             return html.xpath('//a[@class="h3Style"]/@href')
 
     async def process_agenda(self, url):
-        try:
-            if url[-4:] == '.pdf':
-                raise ValueError
+        if url[-4:] == '.pdf':
+            text = await self.crawler.get_payload(url)
+            text = await self.crawler.exec_blocking(pdf2text, text)
+            await self.crawler.exec_blocking(parse_pdf_agenda, url, text)
+        else:
             html = await self.crawler.get_html(url)
-        except (UnicodeDecodeError, ValueError):
-            # Probably a PDF; we might have to insert those manually
-            logger.error('Unable to decode {!r}'.format(url))
-            return
-        await self.crawler.exec_blocking(parse_agenda, url, html)
+            await self.crawler.exec_blocking(parse_agenda, url, html)
 
 
 RE_PP = re.compile(r'(\w+)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟΔΟΣ')
@@ -132,10 +131,79 @@ def parse_agenda(url, html):
         parse_agenda_bill(url, uid, title)
 
 
-def parse_agenda_bill(url, uid, title):
-    bill = Bill.from_template(
+RE_PAGENO = re.compile(r'^ +\d+\n')
+RE_TITLE_OTHER = re.compile(r'\(Πρόταση νόμου[^\)]*\)')
+
+
+def _select_item(url, item):
+    key = item[0]
+    if RE_ID.search(key):
+        return True
+    return logger.warning('Unable to extract document type'
+                          ' of {} in {!r}'.format(item, url))
+
+
+def _clean_item(key, value):
+    return RE_ID.search(key).group(1), \
+           RE_TITLE_OTHER.sub('', ' '.join(value)).rstrip('. ')
+
+
+def parse_pdf_agenda(url, text):
+    def _group_by_key(key, _store=[None]):
+        if not key[0]:
+            return _store[0]
+        else:
+            _store[0] = key[0]
+            return _store[0]
+
+    if (url == 'http://www.parliament.cy/images/media/redirectfile/13-0312015-'
+               ' agenda ΤΟΠΟΘΕΤΗΣΕΙΣ doc.pdf'):
+        # `TableParser` chokes on its mixed two- and three-col layout
+        logger.warning('Skipping {!r} in `parse_pdf_agenda`'.format(url))
+        return
+
+    pages = text.split('\x0c')
+    rows = itertools.chain.from_iterable(
+        TableParser(RE_PAGENO.sub('', page), 2).rows for page in pages)
+
+    agenda_items = (tuple(x[-1] for x in v)
+                    for _, v in itertools.groupby(rows, key=_group_by_key))
+    agenda_items = ((v[-1], v[:-1]) for v in agenda_items)
+    agenda_items = itertools.starmap(_clean_item,
+                                     filter(lambda i: _select_item(url, i),
+                                            agenda_items))
+    agenda_items = odict(agenda_items)
+
+    bills = odict((k, v) for k, v in agenda_items.items()
+                  if k.startswith(('23.01', '23.02', '23.03')))
+    debate_topics = odict((k, v) for k, v in agenda_items.items()
+                          if k.startswith('23.05'))
+
+    unparsed = agenda_items.keys() - bills.keys() - debate_topics.keys()
+    if unparsed:
+        logger.warning('Unparsed items {} in {!r}'.format(unparsed, url))
+
+    plenary_sitting = PlenarySitting.from_template(
         None,
-        {'identifier': uid, 'title': title})
+        {'agenda': {'debate': list(debate_topics.keys()) or None,
+                    'legislative_work': list(bills.keys()) or None},
+         'date': parse_long_date(clean_spaces(pages[0], medial_newlines=True),
+                                 plenary=True),
+         'links': [{'type': 'agenda', 'url': url}],
+         'parliamentary_period': _extract_parliamentary_period(url, text),
+         'session': _parse_session(url, text),
+         'sitting': _parse_sitting(url, text)})
+    if not plenary_sitting.insert():
+        logger.warning('Unable to insert or update plenary on {!r}'
+                       ' in {!r}'.format(plenary_sitting['date'], url))
+
+    for uid, title in bills.items():
+        parse_agenda_bill(url, uid, title)
+
+
+def parse_agenda_bill(url, uid, title):
+    bill = Bill.from_template(None,
+                              {'identifier': uid, 'title': title})
     if not bill.insert():
         logger.warning('Unable to insert or update bill {}'
                        ' in {!r}'.format(bill, url))
