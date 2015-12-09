@@ -60,7 +60,7 @@ class TableParser:
         ('Lorem ipsum   dolor sit   amet',
          'consectetur   adipiscing  totes elit')
         """
-        lines = (line.lstrip() for line in text.splitlines())
+        lines = (line.rstrip() for line in text.splitlines())
         return tuple(filter(None, lines))
 
     @staticmethod
