@@ -105,4 +105,4 @@ class Task:
     """A scraping task primitive."""
 
     def __init__(self, crawler):
-        self.crawler = crawler
+        self.crawler = self.c = crawler
