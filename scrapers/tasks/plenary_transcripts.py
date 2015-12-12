@@ -4,7 +4,7 @@ import logging
 import re
 
 from scrapers.crawling import Task
-from scrapers.records import PlenarySitting
+from scrapers import records
 from scrapers.text_utils import (apply_subs, decipher_name,
                                  parse_transcript_date, pdf2text, TableParser)
 
@@ -26,16 +26,16 @@ class PlenaryAttendance(Task):
             'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_ID.htm',
             'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IE.htm')
 
-        transcript_urls = await self.crawler.gather(
-            {self.process_transcript_listing(url) for url in listing_urls})
+        transcript_urls = await self.c.gather({self.process_transcript_listing(
+            url) for url in listing_urls})
         transcript_urls = itertools.chain.from_iterable(transcript_urls)
-        await self.crawler.gather(
-            {self.process_transcript(url) for url in transcript_urls})
+        await self.c.gather({self.process_transcript(url)
+                             for url in transcript_urls})
 
     __call__ = process_transcript_listings
 
     async def process_transcript_listing(self, url):
-        html = await self.crawler.get_html(url)
+        html = await self.c.get_html(url)
         return html.xpath('//a[contains(@href, "praktiko")]/@href')
 
     async def process_transcript(self, url):
@@ -44,13 +44,12 @@ class PlenaryAttendance(Task):
                            ' skipping {!r}'.format(url))
             return
 
-        text = await self.crawler.exec_blocking(
-            pdf2text, await self.crawler.get_payload(url))
-        await self.crawler.exec_blocking(parse_transcript, url, text)
+        text = await self.c.exec_blocking(pdf2text,
+                                          await self.c.get_payload(url))
+        await self.c.exec_blocking(parse_transcript, url, text)
 
 
 RE_ATTENDEES = re.compile(r'[\n\x0c] *🌮(.*?)🌯', re.DOTALL)
-
 SUBS = [('Παρόντες βουλευτές', '🌮'),
         ('Παρόνηες βοσλεσηές', '🌮'),      # 2015-04-02-1
         ('Παξόληεο βνπιεπηέο', '🌮'),      # 2014-10-23, 2015-04-02-2
@@ -67,9 +66,8 @@ SUBS = [('Παρόντες βουλευτές', '🌮'),
 
 
 def _parse_attendee_name(name, url):
-    # Skip page numbers
     if name.isdigit():
-        return
+        return      # Skip page numbers
 
     new_name = decipher_name(name)
     if not new_name:
@@ -86,10 +84,10 @@ def _parse_attendees(attendee_table, date, text, url):
     # Split at page breaks 'cause the columns will have likely shifted
     attendee_table = attendee_table.split('\x0c')
 
-    attendees = itertools.chain.from_iterable(TableParser(t).values
+    # Assume 3-col layout 'cause they've all got leading whitespace
+    attendees = itertools.chain.from_iterable(TableParser(t, 3).values
                                               for t in attendee_table)
-    attendees = (_parse_attendee_name(a, url) for a in attendees)
-    attendees = filter(None, attendees)
+    attendees = filter(None, (_parse_attendee_name(a, url) for a in attendees))
     # The President's not listed among the attendees
     if 'ΠΡΟΕΔΡΟΣ:' in text or date in {'2015-04-02_1', '2015-04-02_2'}:
         attendees = itertools.chain(attendees, ('Ομήρου Γιαννάκης',))
@@ -111,12 +109,14 @@ def parse_transcript(url, text):
                      ' transcript at {!r}'.format(url))
         return
 
-    plenary_sitting = PlenarySitting.from_template(
-        PlenarySitting.select_date(date),
-        {'attendees': _parse_attendees(attendee_table, date, text, url)})
-    if not plenary_sitting.merge():
-        logger.warning('Unable to locate or update plenary with'
-                       ' filename {!r}'.format(plenary_sitting['_filename']))
+    plenary_sitting = records.PlenarySitting.from_template(
+        filename=date, sources=(url,),
+        update={'attendees': _parse_attendees(attendee_table,
+                                              date, text, url)})
+    try:
+        plenary_sitting.merge()
+    except records.InsertError as e:
+        logger.error(e)
 
 
 class PlenaryTranscriptUrls(Task):
@@ -126,16 +126,15 @@ class PlenaryTranscriptUrls(Task):
 
     async def process_transcript_index(self):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/159'
-        html = await self.crawler.get_html(url)
-        await self.crawler.gather(
-            {self.process_transcript_listing(href)
-             for href in html.xpath('//a[@class="h3Style"]/@href')})
+        html = await self.c.get_html(url)
+        await self.c.gather({self.process_transcript_listing(
+            href) for href in html.xpath('//a[@class="h3Style"]/@href')})
 
     __call__ = process_transcript_index
 
     async def process_transcript_listing(self, url):
-        html = await self.crawler.get_html(url)
-        await self.crawler.exec_blocking(parse_transcript_listing, url, html)
+        html = await self.c.get_html(url)
+        await self.c.exec_blocking(parse_transcript_listing, url, html)
 
 
 def parse_transcript_listing(url, html):
@@ -147,10 +146,10 @@ def parse_transcript_listing(url, html):
                          ' listing at {!r}'.format(date, url))
             continue
 
-        plenary_sitting = PlenarySitting.from_template(
-            PlenarySitting.select_date(date),
-            {'links': [{'type': 'transcript', 'url': href}]})
-        if not plenary_sitting.merge():
-            logger.warning(
-                'Unable to insert transcript with URL {!r} in plenary with'
-                ' filename {!r}'.format(url, plenary_sitting['_filename']))
+        plenary_sitting = records.PlenarySitting.from_template(
+            filename=date, sources=(url,),
+            update={'links': [{'type': 'transcript', 'url': href}]})
+        try:
+            plenary_sitting.merge()
+        except records.InsertError as e:
+            logger.error(e)

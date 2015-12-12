@@ -3,7 +3,7 @@
 
 from collections import Counter, namedtuple
 import datetime
-from functools import reduce, lru_cache
+import functools
 import itertools
 import re
 import string
@@ -81,8 +81,8 @@ class TableParser:
         ... ''', 3)._col_modes
         (14, 26)
         """
-        col_freq = reduce(lambda c, v: c + Counter(self._cols_of(v)),
-                          self._lines, Counter())
+        col_freq = functools.reduce(lambda c, v: c + Counter(self._cols_of(v)),
+                                    self._lines, Counter())
         return tuple(sorted(dict(col_freq.most_common(max_cols-1))))
 
     @staticmethod
@@ -147,29 +147,33 @@ class TableParser:
         return tuple(filter(None, values))
 
 
-class Translit:
-    """Stash away our transliterators.
+def translit_slugify(s):
+    """Slugify a given string.
 
-    >>> Translit.slugify('Ένα duo 3!')
+    Create filenames and URL slugs from Greek (or any) text by
+    converting Greek to alphanumeric ASCII; downcasing the input; and
+    replacing any number of consecutive spaces with a hyphen.
+
+    >>> translit_slugify('Ένα duo 3!')
     'ena-duo-3'
-    >>> Translit.unaccent_lc('Ένα duo 3!')
+    """
+    return icu.Transliterator.createFromRules('slugify', r"""
+        (.*) > &[^[:alnum:][:whitespace:]] any-remove(
+            &any-lower(
+                &Latin-ASCII(
+                    &el-Latin($1))));
+        :: Null;    # Backtrack
+        [:whitespace:]+ > \-;""").transliterate(s)
+
+
+def translit_unaccent_lc(s):
+    """Remove diacritics and downcase the input.
+
+    >>> translit_unaccent_lc('Ένα duo 3!')
     'ενα duo 3!'
     """
-
-    # Create filenames and URL slugs from Greek (or any) text by
-    # converting Greek to alphanumeric ASCII; downcasing the input; and
-    # replacing any number of consecutive spaces with a hyphen
-    slugify = icu.Transliterator.createFromRules('slugify', """
-(.*) > &[^[:alnum:][:whitespace:]] any-remove(
-    &any-lower(
-        &Latin-ASCII(
-            &el-Latin($1))));
-:: Null;    # Backtrack
-[:whitespace:]+ > \-;""").transliterate
-
-    # Remove diacritics and downcase the input
-    unaccent_lc = icu.Transliterator.createInstance(
-        'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate
+    return icu.Transliterator.createInstance(
+        'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate(s)
 
 
 def ungarble_qh(text, _LATN2GREK=str.maketrans('’ABEZHIKMNOPTYXvo',
@@ -182,7 +186,7 @@ def ungarble_qh(text, _LATN2GREK=str.maketrans('’ABEZHIKMNOPTYXvo',
     return text.translate(_LATN2GREK)
 
 
-@lru_cache()
+@functools.lru_cache()
 def decipher_name(name,
                   _MPS=[mp['name']['el']
                         for mp in db.mps.find(projection={'name.el': 1})]):
@@ -200,85 +204,80 @@ def decipher_name(name,
         return
 
 
-class NameConverter:
+class _NameConverter:
     """Crudely convert names in the gen. and acc. cases to the nominative."""
 
     # Retrieve all canonical names from the database, normalising them in
     # the process: {'lastname firstname': 'Lastname Firstname', ...}
-    _NAMES_NOM = {Translit.unaccent_lc(mp['other_name']): mp['name'] for mp
-                  in itertools.chain(
-        db.mps.aggregate([
-            {'$project': {'name': '$name.el', 'other_name': '$name.el'}}]),
-        db.mps.aggregate([
-            {'$unwind': '$other_names'},
-            {'$match': {'other_names.note': re.compile('el-Grek')}},
-            {'$project': {'name': '$name.el',
-                          'other_name': '$other_names.name'}}]))}
+    _NAMES_NOM = itertools.chain(
+        db.mps.aggregate([{'$project': {'name': '$name.el',
+                                        'other_name': '$name.el'}}]),
+        db.mps.aggregate([{'$unwind': '$other_names'},
+                          {'$match': {'other_names.note': re.compile('el-Grek')
+                                      }},
+                          {'$project': {'name': '$name.el',
+                                        'other_name': '$other_names.name'}}]))
+    _NAMES_NOM = {translit_unaccent_lc(mp['other_name']): mp['name']
+                  for mp in _NAMES_NOM}
 
     _TRANSFORMS = itertools.product(
-        [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος'), (r'ς$', r'')],  # fore
-        [(r'', r''), (r'$', r'ς'), (r'ου$', r'ος')])                # aft
-    _TRANSFORMS = itertools.starmap(
-        lambda fore, aft: (lambda s: re.compile(fore[0]).sub(fore[1], s),
-                           lambda s: re.compile(aft[0]).sub(aft[1], s)),
-        _TRANSFORMS)
-    _TRANSFORMS = tuple(_TRANSFORMS)
-
-    def __init__(self, name):
-        orig_name, name = name, self._prepare(name)
-        # NameConverter can only handle two- and three-part names
-        if not 1 < len(name) <= 3:
-            raise ValueError('Incompatible name {!r}'.format(orig_name))
-
-        self._names = itertools.chain(
-            (name,), self._permute(name, self._TRANSFORMS))
+        [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος'), (r'ς$', '')],   # fore
+        [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος')])                # aft
+    _TRANSFORMS = tuple(itertools.starmap(
+        lambda fore, aft: (lambda s: re.sub(fore[0], fore[1], s),
+                           lambda s: re.sub(aft[0],  aft[1], s)), _TRANSFORMS))
 
     @staticmethod
     def _prepare(name):
         """Clean up, normalise and tokenise the `name`."""
         name = ''.join(c for c in name if not c.isdigit())
-        name = Translit.unaccent_lc(name)
+        name = translit_unaccent_lc(name)
         return re.findall(r'\w+', name)
 
     @staticmethod
     def _permute(name, transforms):
-        """Apply all of the `transforms` to a `name`."""
-        first, *middle, last = name
-        return ((fore(first), *(middle and (aft(middle[0]),)), aft(last))
-                for fore, aft in transforms)
+        r"""Apply all of the `transforms` to a `name`, returning a set.
 
-    @property
-    def names(self):
-        """Reverse-concatenate all names in `self._names`, returning a set.
-
-        >>> (NameConverter('Γιαννάκη Ομήρου').names ==
-        ...  {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
-        ...   'ομηρου γιαννακη',  'ομηρος γιαννακη',  'ομηρος γιαννακης'})
+        >>> _NameConverter._permute(_NameConverter._prepare('Γιαννάκη Ομήρου'),
+        ...                         _NameConverter._TRANSFORMS) == \
+        ... {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
+        ...  'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'}
         True
         """
-        return {' '.join(reversed(name)) for name in self._names}
+        first, *middle, last = name
+        names = ((fore(first), *(middle and (aft(middle[0]),)), aft(last))
+                 for fore, aft in transforms)
+        return {' '.join(reversed(name)) for name in names}
 
     @classmethod
-    @lru_cache()
+    @functools.lru_cache()
     def find_match(cls, name):
         """Pair a declined name with a canonical name in the database.
 
-        >>> NameConverter.find_match('Ρούλλας Μαυρονικόλα')
+        >>> _NameConverter.find_match('Ρούλλας Μαυρονικόλα')
         'Μαυρονικόλα Ρούλα'
-        >>> NameConverter.find_match('gibber ish') is None
+        >>> _NameConverter.find_match('gibber ish') is None
         True
-        >>> NameConverter.find_match('gibberish')  # doctest: +ELLIPSIS
+        >>> _NameConverter.find_match('gibberish')  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
         ValueError: Incompatible name 'gibberish'
-        >>> NameConverter.find_match('a b c d')    # doctest: +ELLIPSIS
+        >>> _NameConverter.find_match('a b c d')    # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
         ValueError: Incompatible name 'a b c d'
         """
-        match = cls(name).names & cls._NAMES_NOM.keys()
+        orig_name, name = name, cls._prepare(name)
+        # NameConverter can only handle two- and three-part names
+        if not 1 < len(name) <= 3:
+            raise ValueError('Incompatible name {!r}'.format(orig_name))
+
+        names = cls._permute(name, cls._TRANSFORMS)
+        match = names & cls._NAMES_NOM.keys()
         if match:
             return cls._NAMES_NOM[match.pop()]
+
+match_declined_name = _NameConverter.find_match
 
 
 def parse_short_date(date_string):
@@ -337,7 +336,7 @@ def parse_long_date(date_string, plenary=False):
     if plenary and date_string in PLENARY_EXCEPTIONS:
         return PLENARY_EXCEPTIONS[date_string]
 
-    MONTHS = dict(zip(map(Translit.unaccent_lc,
+    MONTHS = dict(zip(map(translit_unaccent_lc,
                           icu.DateFormatSymbols(icu.Locale('el')).getMonths()),
                       range(1, 13)))  # {'ιανουαριος': 1, ...}
     try:
@@ -348,7 +347,7 @@ def parse_long_date(date_string, plenary=False):
             'Unable to disassemble date in {!r}'.format(date_string)) from None
     try:
         return '{}-{:02d}-{:02d}'.format(
-            *map(int, (y, MONTHS[Translit.unaccent_lc(m)], d)))
+            *map(int, (y, MONTHS[translit_unaccent_lc(m)], d)))
     except KeyError:
         raise ValueError(
             'Malformed month in date {!r}'.format(date_string)) from None
@@ -359,8 +358,8 @@ def parse_transcript_date(date_string):
 
     >>> parse_transcript_date('2013-01-02')
     (Date(date='2013-01-02', slug='2013-01-02'), True)
-    >>> parse_transcript_date('2013-01-02-1')
-    (Date(date='2013-01-02', slug='2013-01-02_1'), True)
+    >>> parse_transcript_date('2013-01-02-2')
+    (Date(date='2013-01-02', slug='2013-01-02_2'), True)
     >>> parse_transcript_date('http://www2.parliament.cy/parliamentgr/008_01/'
     ...                       '008_02_IC/praktiko2013-12-30.pdf')
     (Date(date='2014-01-30', slug='2014-01-30'), True)
@@ -408,24 +407,24 @@ def clean_spaces(text, medial_newlines=False):
 def truncate_slug(slug, max_length=100, sep='-'):
     """Truncate a slug for `max_length`, but keep whole words intact.
 
-    >>> truncate_slug(Translit.slugify('bir iki üç'),
+    >>> truncate_slug(translit_slugify('bir iki üç'),
     ...               max_length=2)    # doctest: +ELLIPSIS
     Traceback (most recent call last):
         ...
     ValueError: Initial component of slug ... is longer than `max_length` ...
-    >>> truncate_slug(Translit.slugify('bir iki üç'),
+    >>> truncate_slug(translit_slugify('bir iki üç'),
     ...               max_length=6)
     'bir'
-    >>> truncate_slug(Translit.slugify('bir iki üç'),
+    >>> truncate_slug(translit_slugify('bir iki üç'),
     ...               max_length=7)
     'bir-iki'
-    >>> truncate_slug(Translit.slugify('bir iki üç'),
+    >>> truncate_slug(translit_slugify('bir iki üç'),
     ...               max_length=9)
     'bir-iki'
-    >>> truncate_slug(Translit.slugify('bir iki üç'),
+    >>> truncate_slug(translit_slugify('bir iki üç'),
     ...               max_length=10)
     'bir-iki-uc'
-    >>> truncate_slug(Translit.slugify('bir iki üç'))
+    >>> truncate_slug(translit_slugify('bir iki üç'))
     'bir-iki-uc'
     """
     orig_slug = slug
@@ -440,4 +439,4 @@ def truncate_slug(slug, max_length=100, sep='-'):
 
 def apply_subs(orig_string, subs):
     """Apply a two-tuple list of substitutions to `orig_string`."""
-    return reduce(lambda s, sub: s.replace(*sub), subs, orig_string)
+    return functools.reduce(lambda s, sub: s.replace(*sub), subs, orig_string)

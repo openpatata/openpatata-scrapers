@@ -3,7 +3,7 @@ import itertools
 import logging
 
 from scrapers.crawling import Task
-from scrapers.records import CommitteeReport
+from scrapers import records
 from scrapers.text_utils import clean_spaces, parse_short_date
 
 logger = logging.getLogger(__name__)
@@ -16,44 +16,55 @@ class CommitteeReports(Task):
 
     async def process_committee_report_index(self):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/220'
-        html = await self.crawler.get_html(url)
+        html = await self.c.get_html(url)
 
-        committee_reports = await self.crawler.gather(
-            {self.process_committee_report_listing(href)
-             for href in html.xpath('//a[@class="h3Style"]/@href')})
+        committee_reports = \
+            await self.c.gather({self.process_committee_report_listing(
+                href) for href in html.xpath('//a[@class="h3Style"]/@href')})
         committee_reports = itertools.chain.from_iterable(committee_reports)
-        await self.crawler.gather(
-            {self.crawler.exec_blocking(parse_committee_report,
-                                        url, *committee_report)
-             for committee_report in committee_reports})
+        await self.c.gather({self.process_committee_report(*committee_report)
+                             for committee_report in committee_reports})
 
     __call__ = process_committee_report_index
 
     async def process_committee_report_listing(self, url):
-        html = await self.crawler.get_html(url)
-        return await self.crawler.exec_blocking(parse_committee_report_listing,
-                                                html, url)
+        html = await self.c.get_html(url, clean=True)
+        return parse_committee_report_listing(url, html)
+
+    async def process_committee_report(self, url, *args):
+        return await self.c.exec_blocking(parse_committee_report, url, *args)
 
 
-def parse_committee_report_listing(html, url):
+def parse_committee_report_listing(url, html):
     date = None
     for item in html.xpath('//td/*[self::ul or self::p]'):
         if item.tag == 'p':
+            date_ = clean_spaces(item.text_content())
+            if not date_:
+                continue
             try:
-                date = parse_short_date(clean_spaces(item.text_content()))
+                date = parse_short_date(date_)
             except ValueError as e:
                 logger.warning(e)
         elif item.tag == 'ul':
-            yield date, item
+            yield url, date, item
 
 
 def parse_committee_report(url, date, item):
-    committee_report = CommitteeReport.from_template(
-        None,
-        {'date_circulated': date,
-         'title': clean_spaces(item.text_content(),
-                               medial_newlines=True),
-         'url': item.xpath('.//a[1]/@href')[0]})
-    if not committee_report.insert():
-        logger.error('Unable to insert or update committee report'
-                     ' {} in {!r}'.format(committee_report, url))
+    try:
+        link = item.xpath('.//a[1]/@href')[0]
+    except IndexError:
+        logger.error('Unable to extract link from {} in {!r}'.format(
+            item.text_content(), url))
+        return
+
+    committee_report = records.CommitteeReport.from_template(
+        filename=None, sources=(url,),
+        update={'date_circulated': date,
+                'title': clean_spaces(item.text_content(),
+                                      medial_newlines=True),
+                'url': link})
+    try:
+        committee_report.insert()
+    except records.InsertError as e:
+        logger.error(e)
