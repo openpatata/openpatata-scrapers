@@ -1,5 +1,5 @@
 
-from collections import OrderedDict as odict
+from collections import defaultdict, namedtuple
 import itertools
 import logging
 import re
@@ -65,6 +65,82 @@ RE_PP = re.compile(r'(\w+)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
 RE_SE = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'΄]')
 RE_SI = re.compile(r'(\d+)[ηή] ?συνεδρίαση')
 RE_ID = re.compile(r'([12]3\.[0-9.-]+)')
+RE_TITLE_OTHER = re.compile(r'\(Πρόταση νόμου[^\)]*\)')
+
+
+class AgendaItems:
+    """Group agenda items according to type."""
+
+    class _AgendaItemDict(defaultdict):
+
+        def __setitem__(self, key, value):
+            if key in self:
+                super().__setitem__(key, self[key] + value)
+            else:
+                super().__setitem__(key, value)
+
+        def __getitem__(self, key):
+            if isinstance(key, tuple):
+                return itertools.chain.from_iterable(map(super().__getitem__,
+                                                         key))
+            else:
+                return super().__getitem__(key)
+
+    ITEM_TYPES = ('13.06',   # decision?
+                  '23.01',   # government bill
+                  '23.02',   # member's bill
+                  '23.03',   # draft regulations
+                  '23.04',   # something or other to do with committees
+                  '23.05',   # debate topic
+                  '23.10',   # decision or draft resolution
+                  '23.15')   # house rules of procedure
+
+    @classmethod
+    def _group(cls, item):
+        key = item[0][:5]
+        if key in cls.ITEM_TYPES:
+            return key
+
+    _AgendaItems = namedtuple('AgendaItems', 'part_a part_d bills_and_regs')
+
+    def __new__(cls, url, agenda_items_):
+        agenda_items__ = itertools.groupby(agenda_items_, key=cls._group)
+        agenda_items = cls._AgendaItemDict(tuple)
+        for k, v in agenda_items__:   # __init__ bypasses __setitem__ (maybe)
+            agenda_items[k] = tuple(v)
+        if None in agenda_items:
+            logger.warning('Unparsed items {} in {!r}'.format(
+                tuple(k for k, _ in agenda_items[None]), url))
+
+        return cls._AgendaItems(
+            sorted(agenda_items['13.06', '23.01', '23.02', '23.03', '23.10',
+                                '23.15'],
+                   key=agenda_items_.index),
+            sorted(agenda_items['23.04', '23.05'],
+                   key=agenda_items_.index),
+            sorted(agenda_items['23.01', '23.02', '23.03'],
+                   key=agenda_items_.index))
+
+
+def _extract_id_and_title(url, item_):
+    # Single-item tuples are probably gonna be table (faux) headers
+    if not any(item_) or len(item_) == 1:
+        return
+
+    item = itertools.dropwhile(lambda v: not RE_ID.search(v), reversed(item_))
+    item = tuple(reversed(tuple(item)))   # ...
+    if not item:
+        logger.info('Unable to extract document type of {} in {!r}'.format(
+            item_, url))
+        return
+
+    id_, title = (RE_ID.search(item[-1]).group(1),
+                  RE_TITLE_OTHER.sub('', ' '.join(item[:-1])).rstrip('. '))
+    if id_ and title:
+        return id_, title
+    else:
+        logger.warning('Id or title empty in {} in {!r}'.format((id_, title),
+                                                                url))
 
 
 def _extract_parliamentary_period(url, text):
@@ -85,49 +161,22 @@ def _extract_sitting(url, text):
         'Unable to extract sitting number of {!r}'.format(url))
 
 
-def _arrange_agenda_items(url, items):
-    # 23.01        government bill
-    # 23.02        member's bill
-    # 23.03        draft regulations
-    # 23.04        something or other to do with committees
-    # 23.05        debate topic
-    # 23.10.100    draft resolution
-    # 23.10.200    decision
-    # 23.15        house rules of procedure
-    bills = odict((k, v) for k, v in items.items()
-                  if k.startswith(('23.01', '23.02', '23.03')))
-    debate_topics = odict((k, v) for k, v in items.items()
-                          if k.startswith('23.05'))
-    unparsed = items.keys() - bills.keys() - debate_topics.keys()
-    if unparsed:
-        logger.warning('Unparsed items {} in {!r}'.format(unparsed, url))
-    return bills, debate_topics
-
-
 def parse_agenda(url, html):
-    agenda_items_ = []
-    for e in html.xpath('//div[@class="articleBox"]//tr/td[last()]'):
-        try:
-            title, *ex, id_ = (clean_spaces(e.text_content())
-                               for e in e.xpath('*[self::div or self::p]'))
-        except ValueError:
-            # Presumably a faux header; skip it
-            continue
-
-        id_ = RE_ID.search(''.join(ex + [id_]))
-        if id_:
-            agenda_items_.append((id_.group(1), title.rstrip('.')))
-        else:
-            logger.warning('Unable to extract document type'
-                           ' of {!r} in {!r}'.format(title, url))
+    agenda_items = (tuple(clean_spaces(i.text_content())
+                          for i in agenda_item.xpath('*'))
+                    for agenda_item in html.xpath('//div[@class="articleBox"]'
+                                                  '//tr/td[last()]'))
+    agenda_items = filter(None, map(_extract_id_and_title,
+                                    itertools.repeat(url), agenda_items))
+    agenda_items = AgendaItems(url, tuple(agenda_items))
 
     text = clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
-    bills, debate_topics = _arrange_agenda_items(url, odict(agenda_items_))
 
     plenary_sitting = records.PlenarySitting.from_template(
         filename=None, sources=(url,),
-        update={'agenda': {'debate': list(debate_topics.keys()),
-                           'legislative_work': list(bills.keys())},
+        update={'agenda': {'debate': tuple(i for i, _ in agenda_items.part_d),
+                           'legislative_work': tuple(i for i, _ in
+                                                     agenda_items.part_a)},
                 'date': parse_long_date(clean_spaces(
                     html.xpath('string(//h1)')), plenary=True),
                 'links': [{'type': 'agenda', 'url': url}],
@@ -140,30 +189,16 @@ def parse_agenda(url, html):
             plenary_sitting.insert()
     except records.InsertError as e:
         logger.error(e)
-    return zip(itertools.repeat(url), bills.keys(), bills.values())
+
+    bills_and_regs = dict(agenda_items.bills_and_regs)
+    return zip(itertools.repeat(url),
+               bills_and_regs.keys(), bills_and_regs.values())
 
 
 RE_PAGE_NO = re.compile(r'^ +(?:\d+|\w)\n')
-RE_TITLE_OTHER = re.compile(r'\(Πρόταση νόμου[^\)]*\)')
 
 
-def _extract_id_and_title(url, item_):
-    if not any(item_):
-        return
-
-    item = itertools.dropwhile(lambda v: not RE_ID.search(v), reversed(item_))
-    item = tuple(reversed(tuple(item)))   # ...
-    if not item:
-        logger.warning('Unable to extract document type of {}'
-                       ' in {!r}'.format(item_, url))
-        return
-
-    id_, title = item[-1], item[:-1]
-    return (RE_ID.search(id_).group(1),
-            RE_TITLE_OTHER.sub('', ' '.join(title)).rstrip('. '))
-
-
-def _group_items():
+def _group_items_of_pdf():
     store = None
 
     def inner(key):
@@ -184,6 +219,7 @@ def parse_pdf_agenda(url, text):
         logger.warning('Skipping {!r} in `parse_pdf_agenda`'.format(url))
         return ()
 
+    # Split the text at page breaks 'cause the table shifts from page to page
     pages = text.split('\x0c')
 
     # Getting rid of the page numbers 'cause they might intersect items in the
@@ -193,21 +229,22 @@ def parse_pdf_agenda(url, text):
                                           for page in pages_)
     # Group rows into tuples, using the leftmost cell as a key, which oughta
     # either contain a list number or be left blank
-    agenda_items_ = (tuple(zip(*v))[-1]
-                     for _, v in itertools.groupby(rows_, key=_group_items()))
+    agenda_items = (tuple(zip(*v))[-1]
+                    for _, v in itertools.groupby(rows_,
+                                                  key=_group_items_of_pdf()))
     # Concatenate the rows into a title string, extract the id, and throw out
     # the junk; the output's an array of id–title two-tuples
-    agenda_items_ = filter(None, (_extract_id_and_title(url, agenda_item)
-                                  for agenda_item in agenda_items_))
-    bills, debate_topics = _arrange_agenda_items(url, odict(agenda_items_))
+    agenda_items = filter(None, (_extract_id_and_title(url, agenda_item)
+                                 for agenda_item in agenda_items))
+    agenda_items = AgendaItems(url, tuple(agenda_items))
 
     plenary_sitting = records.PlenarySitting.from_template(
         filename=None, sources=(url,),
-        update={'agenda': {'debate': list(debate_topics.keys()),
-                           'legislative_work': list(bills.keys())},
-                'date': parse_long_date(clean_spaces(pages[0],
-                                                     medial_newlines=True),
-                                        plenary=True),
+        update={'agenda': {'debate': tuple(i for i, _ in agenda_items.part_d),
+                           'legislative_work': tuple(i for i, _ in
+                                                     agenda_items.part_a)},
+                'date': parse_long_date(clean_spaces(
+                    pages[0], medial_newlines=True), plenary=True),
                 'links': [{'type': 'agenda', 'url': url}],
                 'parliamentary_period': _extract_parliamentary_period(url,
                                                                       text),
@@ -218,14 +255,17 @@ def parse_pdf_agenda(url, text):
             plenary_sitting.insert()
     except records.InsertError as e:
         logger.error(e)
-    return zip(itertools.repeat(url), bills.keys(), bills.values())
+
+    bills_and_regs = dict(agenda_items.bills_and_regs)
+    return zip(itertools.repeat(url),
+               bills_and_regs.keys(), bills_and_regs.values())
 
 
 def parse_agenda_bill(url, uid, title):
-    bill = records.Bill.from_template(
-        filename=None, sources=(url,), update={'identifier': uid,
-                                               'title': title})
-    try:
-        bill.insert()
-    except records.InsertError as e:
-        logger.error(e)
+    bill = records.Bill.from_template(None, (url,),
+                                      {'identifier': uid, 'title': title})
+    if not bill.exists:
+        try:
+            bill.insert()
+        except records.InsertError as e:
+            logger.error(e)
