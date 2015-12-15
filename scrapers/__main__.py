@@ -59,7 +59,7 @@ def init(args):
             dirs or config.IMPORT_DIRS))
         for path, collection in files:
             db[collection].insert_one(io.YamlManager.load_record(str(path),
-                                                                 path.name))
+                                                                 path.stem))
 
     _init(args['<from_path>'], args['<import>'])
 
