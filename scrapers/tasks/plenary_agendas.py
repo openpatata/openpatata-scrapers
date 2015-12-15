@@ -1,5 +1,6 @@
 
 from collections import defaultdict, namedtuple
+import functools
 import itertools
 import logging
 import re
@@ -64,8 +65,8 @@ class PlenaryAgendas(Task):
 RE_PP = re.compile(r'(\w+)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
 RE_SE = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'΄]')
 RE_SI = re.compile(r'(\d+)[ηή] ?συνεδρίαση')
-RE_ID = re.compile(r'([12]3\.[0-9.-]+)')
-RE_TITLE_OTHER = re.compile(r'\(Πρόταση νόμου[^\)]*\)')
+RE_ID = re.compile(r'([12]3\. ?[0-9.-]+)')
+RE_TITLE_OTHER = re.compile(r'\. *\(.*')
 
 
 class AgendaItems:
@@ -113,29 +114,25 @@ class AgendaItems:
                 tuple(k for k, _ in agenda_items[None]), url))
 
         return cls._AgendaItems(
-            sorted(agenda_items['13.06', '23.01', '23.02', '23.03', '23.10',
-                                '23.15'],
-                   key=agenda_items_.index),
-            sorted(agenda_items['23.04', '23.05'],
-                   key=agenda_items_.index),
-            sorted(agenda_items['23.01', '23.02', '23.03'],
-                   key=agenda_items_.index))
+            *map(functools.partial(sorted, key=agenda_items_.index),
+                 (agenda_items['13.06', '23.01', '23.02', '23.03', '23.10',
+                               '23.15'],
+                  agenda_items['23.04', '23.05'],
+                  agenda_items['23.01', '23.02', '23.03']
+                  )))
 
 
-def _extract_id_and_title(url, item_):
-    # Single-item tuples are probably gonna be table (faux) headers
-    if not any(item_) or len(item_) == 1:
-        return
-
-    item = itertools.dropwhile(lambda v: not RE_ID.search(v), reversed(item_))
-    item = tuple(reversed(tuple(item)))   # ...
+def _extract_id_and_title(url, item):
     if not item:
-        logger.info('Unable to extract document type of {} in {!r}'.format(
-            item_, url))
         return
 
-    id_, title = (RE_ID.search(item[-1]).group(1),
-                  RE_TITLE_OTHER.sub('', ' '.join(item[:-1])).rstrip('. '))
+    id_ = RE_ID.search(item)
+    if not id_:
+        logger.info('Unable to extract document type'
+                    ' of {!r} in {!r}'.format(item, url))
+        return
+
+    id_, title = id_.group(1), RE_TITLE_OTHER.sub('', item).rstrip('. ')
     if id_ and title:
         return id_, title
     else:
@@ -162,8 +159,8 @@ def _extract_sitting(url, text):
 
 
 def parse_agenda(url, html):
-    agenda_items = (tuple(clean_spaces(i.text_content())
-                          for i in agenda_item.xpath('*'))
+    agenda_items = (clean_spaces(agenda_item.text_content(),
+                                 medial_newlines=True)
                     for agenda_item in html.xpath('//div[@class="articleBox"]'
                                                   '//tr/td[last()]'))
     agenda_items = filter(None, map(_extract_id_and_title,
@@ -229,13 +226,13 @@ def parse_pdf_agenda(url, text):
                                           for page in pages_)
     # Group rows into tuples, using the leftmost cell as a key, which oughta
     # either contain a list number or be left blank
-    agenda_items = (tuple(zip(*v))[-1]
+    agenda_items = (' '.join(i[-1] for i in v)
                     for _, v in itertools.groupby(rows_,
                                                   key=_group_items_of_pdf()))
     # Concatenate the rows into a title string, extract the id, and throw out
     # the junk; the output's an array of id–title two-tuples
-    agenda_items = filter(None, (_extract_id_and_title(url, agenda_item)
-                                 for agenda_item in agenda_items))
+    agenda_items = filter(None, map(_extract_id_and_title,
+                                    itertools.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
     plenary_sitting = records.PlenarySitting.from_template(
