@@ -1,8 +1,8 @@
 aiohttp
 docopt
+jellyfish
 lxml
 PyICU
 pymongo
 pypandoc
-python-Levenshtein
 PyYAML

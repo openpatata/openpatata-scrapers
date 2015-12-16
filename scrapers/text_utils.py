@@ -11,7 +11,7 @@ import subprocess
 from urllib.parse import urldefrag
 
 import icu
-import Levenshtein
+import jellyfish
 import lxml.html
 import pypandoc
 
@@ -186,98 +186,150 @@ def ungarble_qh(text, _LATN2GREK=str.maketrans('’ABEZHIKMNOPTYXvo',
     return text.translate(_LATN2GREK)
 
 
-@functools.lru_cache()
-def decipher_name(name,
-                  _MPS=[mp['name']['el']
-                        for mp in db.mps.find(projection={'name.el': 1})]):
-    """Pair a jumbled up MP name with a canonical name in the database.
+class _DecipherName:
 
-    >>> decipher_name('Καπθαιηάο Αληξέαο')   # Jesus take the wheel
-    'Καυκαλιάς Αντρέας'
-    >>> decipher_name('') is None
-    True
-    """
-    try:
-        return min((Levenshtein.hamming(name, i), i) for i in _MPS
-                   if len(i) == len(name))[1]
-    except ValueError:
-        return
+    MPS = {mp['name']['el'] for mp in db.mps.find(projection={'name.el': 1})}
+
+    # Accented letters and spaces appear to remain unscatched; we're gonna be
+    # using them to narrow down the list of MPs we throw Hamming's way
+    # #
+    # # icu.LocaleData.getExemplarSet([[0, ]1])
+    # # (Yes, really, that _is_ the function's signature: a second positional
+    # # argument shifts the first one to the right.)
+    # #
+    # # (0: options) -> icu.USET_IGNORE_SPACE = 1
+    # #                 icu.USET_CASE_INSENSITIVE = 2
+    # #                 icu.USET_ADD_CASE_MAPPINGS = 4
+    # # Mystical transformations. See
+    # # https://ssl.icu-project.org/apiref/icu4c/uset_8h.html for the juicy
+    # # details
+    # #
+    # # (1: extype)  -> icu.ULocaleDataExemplarSetType.ES_STANDARD = 0
+    # #                 icu.ULocaleDataExemplarSetType.ES_AUXILIARY = 1
+    # #                 icu.ULocaleDataExemplarSetType.ES_INDEX = 2
+    # #                 !ULOCDATA_ES_PUNCTUATION = 3
+    # #                 !ULOCDATA_ES_COUNT = 4
+    # # The icu4c PUNCTUATION and COUNT bitmasks are not exposed (as constants)
+    # # in pyicu; use their corresponding ints.
+    # # See http://cldr.unicode.org/translation/characters for an explanation
+    # # of each of `extype`, and
+    # # https://ssl.icu-project.org/apiref/icu4c/ulocdata_8h_source.html#l00041
+    # # for their values, if they're ever to change
+    # import icu
+    # from unicodedata import normalize
+    #
+    # MARKERS = icu.LocaleData('el').getExemplarSet(2, 0)
+    # MARKERS = (normalize('NFD', c) for c in MARKERS)
+    # MARKERS = {normalize('NFC', c) for c in MARKERS if '\u0301' in c} | {' '}
+    MARKERS = ' ΆΈΉΊΌΎΏΐάέήίΰόύώ'
+
+    @staticmethod
+    def filter_name(length, accented_letters):
+        def inner(v):
+            if len(v) != length:
+                return False
+            for i, c in accented_letters:
+                if v[i] != c:
+                    return False
+            return True
+        return inner
+
+    @functools.lru_cache(maxsize=None)
+    def __new__(cls, name):
+        """Pair a jumbled up MP name with a canonical name in the database.
+
+        >>> decipher_name('Καπθαιηάο Αληξέαο')   # Jesus take the wheel
+        'Καυκαλιάς Αντρέας'
+        >>> decipher_name('') is None
+        True
+        """
+        markers = tuple((i, c) for i, c in enumerate(name) if c in cls.MARKERS)
+        shortlist = filter(cls.filter_name(len(name), markers), cls.MPS)
+        try:
+            _, new_name = min([jellyfish.hamming_distance(name, v), v]
+                              for v in shortlist)
+            return new_name
+        except ValueError:
+            return
+
+decipher_name = _DecipherName
 
 
-class _NameConverter:
-    """Crudely convert names in the gen. and acc. cases to the nominative."""
+class _CanonicaliseName:
 
-    # Retrieve all canonical names from the database, normalising them in
-    # the process: {'lastname firstname': 'Lastname Firstname', ...}
-    _NAMES_NOM = itertools.chain(
+    # {'lastname firstname': 'Lastname Firstname', ...}
+    NAMES_NOM = {translit_unaccent_lc(mp['other_name']): mp['name']
+                 for mp in itertools.chain(
         db.mps.aggregate([{'$project': {'name': '$name.el',
                                         'other_name': '$name.el'}}]),
         db.mps.aggregate([{'$unwind': '$other_names'},
                           {'$match': {'other_names.note': re.compile('el-Grek')
                                       }},
                           {'$project': {'name': '$name.el',
-                                        'other_name': '$other_names.name'}}]))
-    _NAMES_NOM = {translit_unaccent_lc(mp['other_name']): mp['name']
-                  for mp in _NAMES_NOM}
+                                        'other_name': '$other_names.name'}}]))}
 
-    _TRANSFORMS = itertools.product(
-        [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος'), (r'ς$', '')],   # fore
-        [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος')])                # aft
-    _TRANSFORMS = tuple(itertools.starmap(
-        lambda fore, aft: (lambda s: re.sub(fore[0], fore[1], s),
-                           lambda s: re.sub(aft[0],  aft[1], s)), _TRANSFORMS))
+    # ((fore_1.sub, aft_1.sub), (fore_1.sub, aft_2.sub), ...,
+    #  (fore_2.sub, aft_1.sub), ...)
+    TRANSFORMS = ([(r'', ''), (r'$', 'ς'), (r'ου$', 'ος'), (r'ς$', '')],  # fore
+                  [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος')])               # aft
+    TRANSFORMS = itertools.product(*([(re.compile(p), r) for p, r in v]
+                                     for v in TRANSFORMS))
+    TRANSFORMS = tuple((functools.partial(fore[0].sub, fore[1]),
+                        functools.partial(aft[0].sub, aft[1]))
+                       for fore, aft in TRANSFORMS)
 
     @staticmethod
-    def _prepare(name):
+    def prepare(name):
         """Clean up, normalise and tokenise the `name`."""
         name = ''.join(c for c in name if not c.isdigit())
         name = translit_unaccent_lc(name)
         return re.findall(r'\w+', name)
 
     @staticmethod
-    def _permute(name, transforms):
+    def permute(name, transforms):
         r"""Apply all of the `transforms` to a `name`, returning a set.
 
-        >>> _NameConverter._permute(_NameConverter._prepare('Γιαννάκη Ομήρου'),
-        ...                         _NameConverter._TRANSFORMS) == \
-        ... {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
-        ...  'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'}
+        >>> (_CanonicaliseName.permute(
+        ...      _CanonicaliseName.prepare('Γιαννάκη Ομήρου'),
+        ...      _CanonicaliseName.TRANSFORMS) ==
+        ...  {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
+        ...   'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'})
         True
         """
         first, *middle, last = name
         names = ((fore(first), *(middle and (aft(middle[0]),)), aft(last))
                  for fore, aft in transforms)
-        return {' '.join(reversed(name)) for name in names}
+        names = {' '.join(reversed(name)) for name in names}
+        return names
 
-    @classmethod
-    @functools.lru_cache()
-    def find_match(cls, name):
+    @functools.lru_cache(maxsize=None)
+    def __new__(cls, name):
         """Pair a declined name with a canonical name in the database.
 
-        >>> _NameConverter.find_match('Ρούλλας Μαυρονικόλα')
+        >>> _CanonicaliseName('Ρούλλας Μαυρονικόλα')
         'Μαυρονικόλα Ρούλα'
-        >>> _NameConverter.find_match('gibber ish') is None
+        >>> _CanonicaliseName('gibber ish') is None
         True
-        >>> _NameConverter.find_match('gibberish')  # doctest: +ELLIPSIS
+        >>> _CanonicaliseName('gibberish')  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
         ValueError: Incompatible name 'gibberish'
-        >>> _NameConverter.find_match('a b c d')    # doctest: +ELLIPSIS
+        >>> _CanonicaliseName('a b c d')    # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
         ValueError: Incompatible name 'a b c d'
         """
-        orig_name, name = name, cls._prepare(name)
+        orig_name, name = name, cls.prepare(name)
         # NameConverter can only handle two- and three-part names
         if not 1 < len(name) <= 3:
             raise ValueError('Incompatible name {!r}'.format(orig_name))
 
-        names = cls._permute(name, cls._TRANSFORMS)
-        match = names & cls._NAMES_NOM.keys()
+        names = cls.permute(name, cls.TRANSFORMS)
+        match = names & cls.NAMES_NOM.keys()
         if match:
-            return cls._NAMES_NOM[match.pop()]
+            return cls.NAMES_NOM[match.pop()]
 
-match_declined_name = _NameConverter.find_match
+match_declined_name = _CanonicaliseName
 
 
 def parse_short_date(date_string):
