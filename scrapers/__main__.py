@@ -24,8 +24,7 @@ from textwrap import dedent
 
 import docopt
 
-from scrapers import config, crawling, db, io
-from scrapers.tasks import TASKS
+from scrapers import config, db, io
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +73,9 @@ def run(args):
         -d --debug      Print asyncio debugging messages to stderr
         -h --help       Show this screen
     """
+    from scrapers import crawling
+    from scrapers.tasks import TASKS
+
     def _run(task, debug):
         if task not in TASKS:
             raise docopt.DocoptExit('Task must to be one of: {}'.format(
@@ -120,6 +122,7 @@ def clear_cache(_):
     Options:
         -h --help       Show this screen
     """
+    from scrapers import crawling
     crawling.Crawler.clear_cache()
 
 
