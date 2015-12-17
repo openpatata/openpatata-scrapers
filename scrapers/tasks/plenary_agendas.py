@@ -65,7 +65,8 @@ class PlenaryAgendas(Task):
 RE_PP = re.compile(r'(\w+)[\'΄] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
 RE_SE = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'΄]')
 RE_SI = re.compile(r'(\d+)[ηή] ?συνεδρίαση')
-RE_ID = re.compile(r'([12]3\. ?[0-9.-]+)')
+RE_ID = re.compile(r'([12]3\.[0-9.-]+)')
+RE_ITEM_NO = re.compile(r'^\d+\. *')
 RE_TITLE_OTHER = re.compile(r'\. *\(.*')
 
 
@@ -132,7 +133,8 @@ def _extract_id_and_title(url, item):
                     ' of {!r} in {!r}'.format(item, url))
         return
 
-    id_, title = id_.group(1), RE_TITLE_OTHER.sub('', item).rstrip('. ')
+    id_, title = id_.group(1), \
+        RE_ITEM_NO.sub('', RE_TITLE_OTHER.sub('', item)).rstrip('. ')
     if id_ and title:
         return id_, title
     else:
@@ -162,7 +164,7 @@ def parse_agenda(url, html):
     agenda_items = (clean_spaces(agenda_item.text_content(),
                                  medial_newlines=True)
                     for agenda_item in html.xpath('//div[@class="articleBox"]'
-                                                  '//tr/td[last()]'))
+                                                  '//tr'))
     agenda_items = filter(None, map(_extract_id_and_title,
                                     itertools.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
