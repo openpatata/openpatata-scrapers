@@ -1,20 +1,22 @@
 
+from datetime import date
 import itertools
 import logging
 import re
 
 from scrapers.crawling import Task
+from scrapers.misc_utils import starfilter
 from scrapers import records
-from scrapers.text_utils import (apply_subs, decipher_name,
-                                 parse_transcript_date, pdf2text, TableParser)
+from scrapers.tasks.plenary_agendas import (extract_parliamentary_period,
+                                            extract_session)
+from scrapers.text_utils import (apply_subs, CanonicaliseName, clean_spaces,
+                                 date2dato, parse_long_date, TableParser)
 
 logger = logging.getLogger(__name__)
 
 
-class PlenaryAttendance(Task):
+class PlenaryTranscripts(Task):
     """Extract MPs in attendance at plenary sittings from transcripts."""
-
-    name = 'plenary_attendance'
 
     async def process_transcript_listings(self):
         listing_urls = (
@@ -26,11 +28,12 @@ class PlenaryAttendance(Task):
             'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_ID.htm',
             'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IE.htm')
 
-        transcript_urls = await self.c.gather({self.process_transcript_listing(
-            url) for url in listing_urls})
+        transcript_urls = await \
+            self.c.gather({self.process_transcript_listing(url)
+                           for url in listing_urls})
         transcript_urls = itertools.chain.from_iterable(transcript_urls)
-        await self.c.gather({self.process_transcript(url)
-                             for url in transcript_urls})
+        return await self.c.gather({self.process_transcript(url)
+                                    for url in transcript_urls})
 
     __call__ = process_transcript_listings
 
@@ -39,117 +42,107 @@ class PlenaryAttendance(Task):
         return html.xpath('//a[contains(@href, "praktiko")]/@href')
 
     async def process_transcript(self, url):
-        if url[-4:] != '.pdf':
-            logger.warning('We are only able to parse PDF transcripts;'
-                           ' skipping {!r}'.format(url))
-            return
+        return url, await self.c.get_payload(url, decode=True)
 
-        text = await self.c.exec_blocking(pdf2text,
-                                          await self.c.get_payload(url))
-        await self.c.exec_blocking(parse_transcript, url, text)
+    @staticmethod
+    def after(output):
+        for transcript in output:
+            _parse_transcript(*transcript)
 
 
-RE_ATTENDEES = re.compile(r'[\n\x0c] *🌮(.*?)🌯', re.DOTALL)
-SUBS = [('Παρόντες βουλευτές', '🌮'),
-        ('Παρόνηες βοσλεσηές', '🌮'),      # 2015-04-02-1
-        ('Παξόληεο βνπιεπηέο', '🌮'),      # 2014-10-23, 2015-04-02-2
-        ('(Ώρα λήξης: 6.15 μ.μ.)', '🌮'),  # 2015-03-19
-        ('Παρόντες αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),
-        ('Παρόνηες ανηιπρόζωποι θρηζκεσηικών ομάδων', '🌯'),  # 2015-04-02-1
-        ('Παξόληεο αληηπξόζσπνη ζξεζθεπηηθώλ νκάδσλ', '🌯'),  # 2015-04-02-2
-        ('Αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),  # 2014-10-23
-        ('Περιεχόμενα', '🌯'),
-        ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),
-        ('ΠΔΡΙΔΥΟΜΔΝΑ', '🌯'),  # 2014-10-23
-        # Spelling error in 2014-11-20
-        ('Χαμπουλάς Ευγένιος', 'Χαμπουλλάς Ευγένιος')]
-
-
-def _parse_attendee_name(name, url):
+def _extract_attendee_name(url, name):
     if name.isdigit():
         return      # Skip page numbers
 
-    new_name = decipher_name(name)
+    new_name = CanonicaliseName.from_garbled(
+        clean_spaces(name, medial_newlines=True))
     if not new_name:
         logger.warning('Unable to pair name {!r} with MP on record'
-                       ' while processing {!r}'.format(name, url))
+                       ' while parsing {!r}'.format(name, url))
         return
     if name != new_name:
-        logger.info('Name {!r} converted to {!r} while'
-                    ' processing {!r}'.format(name, new_name, url))
+        logger.info('Name {!r} converted to {!r}'
+                    ' while parsing {!r}'.format(name, new_name, url))
     return new_name
 
 
-def _parse_attendees(attendee_table, date, text, url):
-    # Split at page breaks 'cause the columns will have likely shifted
-    attendee_table = attendee_table.split('\x0c')
-
-    # Assume 3-col layout 'cause they've all got leading whitespace
-    attendees = itertools.chain.from_iterable(TableParser(t, 3).values
-                                              for t in attendee_table)
-    attendees = filter(None, (_parse_attendee_name(a, url) for a in attendees))
-    # The President's not listed among the attendees
-    if 'ΠΡΟΕΔΡΟΣ:' in text or date in {'2015-04-02_1', '2015-04-02_2'}:
-        attendees = itertools.chain(attendees, ('Ομήρου Γιαννάκης',))
-    return sorted(attendees)
+PRESIDENTS = (((date(2001, 6, 21), date(2007, 12, 19)), 'Χριστόφιας Δημήτρης'),
+              ((date(2008, 3, 20), date(2011, 4, 22)), 'Καρογιάν Μάριος'),
+              ((date(2011, 6, 9), date.today()), 'Ομήρου Γιαννάκης')
+              )
+PRESIDENTS = tuple((range(*map(date.toordinal, dates)), {name})
+                   for dates, name in PRESIDENTS)
 
 
-def parse_transcript(url, text):
-    date, date_success = parse_transcript_date(url)
-    if not date_success:
-        logger.error('Unable to extract date from filename of'
-                     ' transcript at {!r}'.format(url))
-        return
-
-    text = apply_subs(text, SUBS)
+def _select_president(date_):
+    match = starfilter((lambda date: lambda date_range, _: date in date_range)
+                       (date2dato(date_).toordinal()), PRESIDENTS)
     try:
-        attendee_table = RE_ATTENDEES.search(text).group(1)
-    except AttributeError:
-        logger.error('Unable to extract attendee table from'
-                     ' transcript at {!r}'.format(url))
+        _, name = next(match)
+        return name
+    except StopIteration:
+        raise ValueError('No President found for {!r}'.format(date_)) from None
+
+
+SUBS = (('|', ''),
+        ('Παρόντες βουλευτές', '🌮'),
+        ('ΠΑΡΌΝΤΕΣ ΒΟΥΛΕΥΤΈΣ', '🌮'),      # pandoc
+        ('(Ώρα λήξης: 6.15 μ.μ.)', '🌮'),  # 2015-03-19
+        ('Παρόντες αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),
+        ('Αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),  # 2014-10-23
+        ('Περιεχόμενα', '🌯'),
+        ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),
+        ('Φακοντής Σοφοκλής', 'Φακοντής Αντρέας')  # s/e in 2011-12-13
+        )
+
+
+def _extract_attendees(url, text, heading, date):
+    # Split at page breaks 'cause the columns will have likely shifted
+    # and strip off leading whitespace
+    attendee_table = (apply_subs(text, SUBS).rpartition('🌮')[2]
+                                            .partition('🌯')[0])
+    attendee_table = attendee_table.split('\x0c')
+    attendee_table = ('\n'.join(l.lstrip() for l in s.splitlines())
+                      for s in attendee_table)
+
+    attendees = set(filter(None, (_extract_attendee_name(url, a)
+                                  for t in attendee_table
+                                  for a in TableParser(t, max_cols=2).values)))
+    # The President's not listed among the attendees
+    attendees = attendees | _select_president(date) if 'ΠΡΟΕΔΡΟΣ:' in heading \
+        else attendees
+    attendees = sorted(attendees)
+    return attendees
+
+
+RE_SI = re.compile(r'Αρ\. (\d+)')
+
+
+def _extract_sitting(url, text):
+    match = RE_SI.search(text)
+    return int(match.group(1)) if match else logger.warning(
+        'Unable to extract sitting number of {!r}'.format(url))
+
+
+def _parse_transcript(url, text):
+    heading = clean_spaces(text.partition('(')[0], medial_newlines=True)
+    try:
+        date = parse_long_date(heading)
+    except ValueError as e:
+        logger.error('{} in {!r}'.format(e, url))
         return
 
     plenary_sitting = records.PlenarySitting.from_template(
-        filename=date, sources=(url,),
-        update={'attendees': _parse_attendees(attendee_table,
-                                              date, text, url)})
+        sources=(url,),
+        update={'attendees': _extract_attendees(url, text, heading, date),
+                'date': date,
+                'links': [{'type': 'transcript', 'url': url}],
+                'parliamentary_period': extract_parliamentary_period(url,
+                                                                     heading),
+                'session': extract_session(url, heading),
+                'sitting': _extract_sitting(url, heading)})
     try:
-        plenary_sitting.merge()
+        plenary_sitting.merge() if plenary_sitting.exists else \
+            plenary_sitting.insert()
     except records.InsertError as e:
         logger.error(e)
-
-
-class PlenaryTranscriptUrls(Task):
-    """Add transcript links to plenary-sitting records."""
-
-    name = 'plenary_transcript_urls'
-
-    async def process_transcript_index(self):
-        url = 'http://www.parliament.cy/easyconsole.cfm/id/159'
-        html = await self.c.get_html(url)
-        await self.c.gather({self.process_transcript_listing(
-            href) for href in html.xpath('//a[@class="h3Style"]/@href')})
-
-    __call__ = process_transcript_index
-
-    async def process_transcript_listing(self, url):
-        html = await self.c.get_html(url)
-        await self.c.exec_blocking(parse_transcript_listing, url, html)
-
-
-def parse_transcript_listing(url, html):
-    for href, date, date_success in \
-            ((href, *parse_transcript_date(href))
-             for href in html.xpath('//a[contains(@href, "praktiko")]/@href')):
-        if not date_success:
-            logger.error('Unable to extract date {!r} from transcript'
-                         ' listing at {!r}'.format(date, url))
-            continue
-
-        plenary_sitting = records.PlenarySitting.from_template(
-            filename=date, sources=(url,),
-            update={'links': [{'type': 'transcript', 'url': href}]})
-        try:
-            plenary_sitting.merge()
-        except records.InsertError as e:
-            logger.error(e)

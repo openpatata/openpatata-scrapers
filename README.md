@@ -6,12 +6,12 @@ a database, a copy of which is maintained at
 bills and regulations, and written questions. The proximate goal of the project
 is to allow for the multiform presentation and analysis of the data; the
 ultimate goal is for the Cypriot public to gain a better understanding of the
-activities of their elected representatives. As of October 2015, and to the best
+activities of their elected representatives. As of October 2015, and to the best
 of my knowledge, the only user of the data is the
 [openpatata](http://github.com/openpatata/openpatata) website.
 
-*openpatata-scrapers* is written in Python (3.5+). It requires icu4c,
-mongodb (2.6+), pandoc, pdftotext (Poppler), and a \*nix environment.
+*openpatata-scrapers* is written in Python (3.5+). It requires antiword, icu4c,
+libmagic, mongodb (2.6+), pandoc, pdftotext (Poppler), and a \*nix environment.
 
 ## Usage instructions
 
@@ -24,7 +24,7 @@ git clone https://github.com/openpatata/openpatata-scrapers
 cd openpatata-scrapers
 git clone https://github.com/openpatata/openpatata-data data
 
-brew install icu4c mongodb pandoc python3   # Or apt-get or dnf or whatever
+brew install antiword icu4c libmagic mongodb pandoc python3   # Or apt-get or dnf or whatever
 brew link --force icu4c
 
 python3 -m venv venv
@@ -48,8 +48,7 @@ To crawl the parliament website:
 
 ```bash
 python3 -m scrapers run plenary_agendas 2> error.log
-python3 -m scrapers run plenary_transcript_urls 2>> error.log
-python3 -m scrapers run plenary_attendance 2>> error.log
+python3 -m scrapers run plenary_transcripts 2>> error.log
 python3 -m scrapers run questions 2>> error.log
 ```
 

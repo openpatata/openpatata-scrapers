@@ -10,9 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class CommitteeReports(Task):
-    """Parse committee reports into individual records."""
-
-    name = 'committee_reports'
+    """Create committee-report records from their listings."""
 
     async def process_committee_report_index(self):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/220'
@@ -22,20 +20,21 @@ class CommitteeReports(Task):
             await self.c.gather({self.process_committee_report_listing(
                 href) for href in html.xpath('//a[@class="h3Style"]/@href')})
         committee_reports = itertools.chain.from_iterable(committee_reports)
-        await self.c.gather({self.process_committee_report(*committee_report)
-                             for committee_report in committee_reports})
+        return committee_reports
 
     __call__ = process_committee_report_index
 
     async def process_committee_report_listing(self, url):
         html = await self.c.get_html(url, clean=True)
-        return parse_committee_report_listing(url, html)
+        return _parse_committee_report_listing(url, html)
 
-    async def process_committee_report(self, url, *args):
-        return await self.c.exec_blocking(parse_committee_report, url, *args)
+    @staticmethod
+    def after(output):
+        for committee_report in output:
+            _parse_committee_report(*committee_report)
 
 
-def parse_committee_report_listing(url, html):
+def _parse_committee_report_listing(url, html):
     date = None
     for item in html.xpath('//td/*[self::ul or self::p]'):
         if item.tag == 'p':
@@ -50,7 +49,7 @@ def parse_committee_report_listing(url, html):
             yield url, date, item
 
 
-def parse_committee_report(url, date, item):
+def _parse_committee_report(url, date, item):
     try:
         link = item.xpath('.//a[1]/@href')[0]
     except IndexError:
@@ -59,7 +58,7 @@ def parse_committee_report(url, date, item):
         return
 
     committee_report = records.CommitteeReport.from_template(
-        filename=None, sources=(url,),
+        sources=(url,),
         update={'date_circulated': date,
                 'title': clean_spaces(item.text_content(),
                                       medial_newlines=True),

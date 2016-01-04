@@ -29,6 +29,10 @@ class _Record(dict):
                 yield pk, value
         return inner(self)
 
+    def _construct_filename(self):
+        """Subclass to construct the `_filename` at initialisation."""
+        raise NotImplementedError
+
     def _prepare_insert(self, compact):
         """Subclass to prepare a _Record for `self.insert`."""
         return getattr(self, 'compact' if compact else 'unwrap')().ordered
@@ -72,9 +76,16 @@ class _Record(dict):
         return self.__class__(filter(lambda i: bool(i[1]),
                                      self.unwrap().items()))
 
+    @property
+    def exists(self):
+        """See whether a `_Record` with the same `_filename` already exists."""
+        return db[self.collection].find_one({'_filename': self['_filename']})
+
     def insert(self, compact=False, upsert=True):
-        """Insert a _Record in the database, returning the resulting
-        document or `None`.
+        """Insert a `_Record` in the database.
+
+        Returns the resulting document on success and raises `InsertError`
+        on failure.
         """
         rval = db[self.collection].find_one_and_update(
             filter={'_filename': self['_filename']},
@@ -88,22 +99,18 @@ class _Record(dict):
         """Convenience wrapper around `self.insert` for merging."""
         return self.insert(compact=True, upsert=False)
 
-    @property
-    def exists(self):
-        return db[self.collection].find_one({'_filename': self['_filename']})
-
     @classmethod
-    def from_template(cls, filename=None, sources=None, update=None):
+    def from_template(cls, sources=None, update=None):
         """Pre-fill a _Record using its template."""
         value = cls(eval(cls.template))   # Fair bit easier than deep-copying
-        value.update({'_filename': filename,
-                      '_sources': list(sources) if sources else []})
+        value['_sources'] = list(sources) if sources else []
         if update:
             value.update(update)
-        value['_filename'] = value._construct_filename() or value['_filename']
+        value['_filename'] = value._construct_filename()
         return value
 
     def __repr__(self):
+        # Print out the `type()` in addition to the `dict`.
         return '<{}: {!r}>'.format(self.__class__.__name__, super().__repr__())
 
 
@@ -114,7 +121,7 @@ class Bill(_Record):
                    'title': None}"""
 
     def _construct_filename(self):
-        return self['_filename'] or self['identifier']
+        return self['identifier']
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)
@@ -154,48 +161,13 @@ class PlenarySitting(_Record):
                    'sitting': None}"""
 
     def _construct_filename(self):
-        filename = self['_filename']
-        if not self['date']:
-            # See if there was a second plenary on the date, returning its
-            # slug
-            try:
-                date = filename
-                date.date and date.slug
-            except AttributeError:
-                return filename
-            else:
-                if date.date != date.slug and db[self.collection].find_one(
-                        filter={'_filename': date.slug}):
-                    return date.slug
-                else:
-                    return date.date
-
-        # Version same-day sitting filenames from oldest to newest;
-        # extraordinary sittings come last. We're doing this bit of filename
-        # trickery 'cause:
-        # (a) it's probably a good idea if the filenames were to persist; and
-        # (b) Parliament similarly version the transcript filenames, meaning
-        # that we can avoid downloading and parsing the PDFs (for now, anyway)
-        sittings = (
-            {(p.get('sitting') or None) for p in
-             db[self.collection].find(filter={'date': self['date']})} |
-            {self['sitting'] or None})
-        sittings = sorted(sittings,
-                          key=lambda v: float('inf') if v is None else v)
-        sittings = ((('{}_{}'.format(self['date'], index+1)
-                      if index > 0 else self['date']),
-                     sitting)
-                    for index, sitting in enumerate(sittings))
-        for filename_, sitting in sittings:
-            db[self.collection].find_one_and_update(
-                filter={'date': self['date'], 'sitting': sitting},
-                update={'$set': {'_filename': filename_}})
-            if self['sitting'] == sitting:
-                filename = filename_
-        return filename
+        return '_'.join(map(str, (self['date'], self['parliamentary_period'],
+                                  self['session'], self['sitting'])))
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)
+        value['date'] = value['date'].date if hasattr(value['date'], 'date') \
+            else value['date']
         ins = {'$addToSet': {}, '$set': value}
         source = value.pop('_sources')
         if source:
@@ -207,8 +179,8 @@ class PlenarySitting(_Record):
 
             legislative_work = value.pop('agenda.legislative_work', None)
             if legislative_work:
-                ins['$addToSet'].update({'agenda.legislative_work': {
-                    '$each': legislative_work}})
+                ins['$addToSet'].update(
+                    {'agenda.legislative_work': {'$each': legislative_work}})
 
             links = value.pop('links', None)
             if links:
@@ -229,7 +201,7 @@ class Question(_Record):
     def _construct_filename(self):
         filename = self['identifier']
         other = db[self.collection].count(
-            {'_filename': re.compile(r'{}(_\d+)?'.format(filename))})
+            {'_filename': re.compile(r'{}(_\d+)?$'.format(filename))})
         if other:
             return '{}_{}'.format(filename, other+1)
         else:

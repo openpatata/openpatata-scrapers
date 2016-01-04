@@ -1,38 +1,56 @@
 
 """Various stand-alone utilities for manipulating text."""
 
-from collections import Counter, namedtuple
+from collections import Counter
 import datetime
 import functools
 import itertools
 import re
 import string
 import subprocess
+import tempfile
 from urllib.parse import urldefrag
 
 import icu
 import jellyfish
 import lxml.html
-import pypandoc
 
 from scrapers import db
+from scrapers.misc_utils import starfilter
 
 
-def pdf2text(stream):
+def _text_from_sp(args, input_=None):
+    return (subprocess.run(args, input=input_, stdout=subprocess.PIPE)
+                      .stdout.decode())
+
+
+def doc_to_text(buffer):
+    """Convert a `.doc` from `buffer` to plain text."""
+    return _text_from_sp(('antiword', '-w 0', '-'), buffer)
+
+
+def docx_to_text(buffer):
+    """Convert a `.docx` from `buffer` to plain text."""
+    with tempfile.NamedTemporaryFile() as file:   # Pandoc requires the input be a file when it's a binary
+        file.write(buffer)
+        return _text_from_sp(('pandoc',
+                              '--from=docx', '--to=plain', '--no-wrap',
+                              file.name))
+
+
+def pdf_to_text(buffer):
     """Parse a bytes object into a PDF and into text."""
-    text = subprocess.run(('pdftotext', '-layout', '-', '-'),
-                          input=stream, stdout=subprocess.PIPE)
-    text = text.stdout.decode(encoding='utf-8')
-    return text
+    return _text_from_sp(('pdftotext', '-layout', '-', '-'), buffer)
 
 
-def parse_html(url, text, clean=False):
-    """Parse HTML into an `lxml` tree."""
+def html_to_lxml(url, text, clean=False):
+    """Parse plain-text HTML into an `lxml` tree."""
     if clean:
-        text = pypandoc.convert(text, 'html5', format='html')
+        text = _text_from_sp(('pandoc', '--from=html', '--to=html5'),
+                             text.encode())
     html = lxml.html.document_fromstring(text)
     # Endless loops ahoy
-    html.rewrite_links(lambda s: None if urldefrag(s).url == url else s,
+    html.rewrite_links(lambda s: '' if urldefrag(s).url == url else s,
                        base_href=url)
     return html
 
@@ -46,7 +64,7 @@ class TableParser:
 
     @staticmethod
     def _split_lines(text):
-        r"""Split and remove leading whitespace from all lines.
+        r"""Split and remove trailing whitespace from all lines.
 
         Additionally, remove blank lines.
 
@@ -64,10 +82,10 @@ class TableParser:
         return tuple(filter(None, lines))
 
     @staticmethod
-    def _cols_of(line):
+    def _find_cols(line):
         """The leading-edge indices of hypothetical columns within a line.
 
-        >>> TableParser._cols_of('Lorem ipsum   dolor sit   amet')
+        >>> TableParser._find_cols('Lorem ipsum   dolor sit   amet')
         (14, 26)
         """
         return tuple(m.end() for m in re.finditer(r'\s{2,}', line))
@@ -81,20 +99,22 @@ class TableParser:
         ... ''', 3)._col_modes
         (14, 26)
         """
-        col_freq = functools.reduce(lambda c, v: c + Counter(self._cols_of(v)),
-                                    self._lines, Counter())
+        col_freq = functools.reduce(
+            lambda c, v: c + Counter(self._find_cols(v)),
+            self._lines, Counter())
         return tuple(sorted(dict(col_freq.most_common(max_cols-1))))
 
     @staticmethod
     def _adjust_col(line, col):
-        """Shift the `col` left if it overlaps a letter."""
+        """Shift the `col` to the left if it overlaps a letter."""
         part = line[:col]
         if part == line:   # If the trailing cell's empty, take a shortcut
             return col
 
-        part = itertools.dropwhile(lambda v: v[1] not in string.whitespace,
-                                   reversed(tuple(enumerate(part))))
-        return next(part)[0]
+        part = starfilter(lambda _, c: c in string.whitespace,
+                          reversed(tuple(enumerate(part))))
+        new_col, _ = next(part)
+        return new_col
 
     @classmethod
     def _chop_line(cls, line, cols):
@@ -104,11 +124,11 @@ class TableParser:
         'cause it's easier that way.  Misaligned columns are translated to
         the left.
 
-        >>> TableParser('')._chop_line('Lorem ipsum   dolor sit   amet',
-        ...                            (14, 26))
+        >>> TableParser._chop_line('Lorem ipsum   dolor sit   amet',
+        ...                        (14, 26))
         ('Lorem ipsum', 'dolor sit', 'amet')
-        >>> TableParser('')._chop_line('Lorem ipsum   dolor sit   amet',
-        ...                            (16, 26))  # col '16' overlaps 'dolor'
+        >>> TableParser._chop_line('Lorem ipsum   dolor sit   amet',
+        ...                        (16, 26))  # col '16' overlaps 'dolor'
         ('Lorem ipsum', 'dolor sit', 'amet')
         """
         cols = tuple(itertools.chain((0,), map(cls._adjust_col,
@@ -176,8 +196,8 @@ def translit_unaccent_lc(s):
         'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate(s)
 
 
-def ungarble_qh(text, _LATN2GREK=str.maketrans('’ABEZHIKMNOPTYXvo',
-                                               'ΆΑΒΕΖΗΙΚΜΝΟΡΤΥΧνο')):
+def ungarble_qh(text, _LATN2GREK=str.maketrans('’AB∆EZHIKMNOPTYXvo',
+                                               'ΆΑΒΔΕΖΗΙΚΜΝΟΡΤΥΧνο')):
     """Ungarble question headings.
 
     This function will indiscriminately replace Latin characters with
@@ -186,87 +206,20 @@ def ungarble_qh(text, _LATN2GREK=str.maketrans('’ABEZHIKMNOPTYXvo',
     return text.translate(_LATN2GREK)
 
 
-class _DecipherName:
+class CanonicaliseName:
 
-    MPS = {mp['name']['el'] for mp in db.mps.find(projection={'name.el': 1})}
-
-    # Accented letters and spaces appear to remain unscatched; we're gonna be
-    # using them to narrow down the list of MPs we throw Hamming's way
-    # #
-    # # icu.LocaleData.getExemplarSet([[0, ]1])
-    # # (Yes, really, that _is_ the function's signature: a second positional
-    # # argument shifts the first one to the right.)
-    # #
-    # # (0: options) -> icu.USET_IGNORE_SPACE = 1
-    # #                 icu.USET_CASE_INSENSITIVE = 2
-    # #                 icu.USET_ADD_CASE_MAPPINGS = 4
-    # # Mystical transformations. See
-    # # https://ssl.icu-project.org/apiref/icu4c/uset_8h.html for the juicy
-    # # details
-    # #
-    # # (1: extype)  -> icu.ULocaleDataExemplarSetType.ES_STANDARD = 0
-    # #                 icu.ULocaleDataExemplarSetType.ES_AUXILIARY = 1
-    # #                 icu.ULocaleDataExemplarSetType.ES_INDEX = 2
-    # #                 !ULOCDATA_ES_PUNCTUATION = 3
-    # #                 !ULOCDATA_ES_COUNT = 4
-    # # The icu4c PUNCTUATION and COUNT bitmasks are not exposed (as constants)
-    # # in pyicu; use their corresponding ints.
-    # # See http://cldr.unicode.org/translation/characters for an explanation
-    # # of each of `extype`, and
-    # # https://ssl.icu-project.org/apiref/icu4c/ulocdata_8h_source.html#l00041
-    # # for their values, if they're ever to change
-    # import icu
-    # from unicodedata import normalize
-    #
-    # MARKERS = icu.LocaleData('el').getExemplarSet(2, 0)
-    # MARKERS = (normalize('NFD', c) for c in MARKERS)
-    # MARKERS = {normalize('NFC', c) for c in MARKERS if '\u0301' in c} | {' '}
-    MARKERS = ' ΆΈΉΊΌΎΏΐάέήίΰόύώ'
-
-    @staticmethod
-    def filter_name(length, accented_letters):
-        def inner(v):
-            if len(v) != length:
-                return False
-            for i, c in accented_letters:
-                if v[i] != c:
-                    return False
-            return True
-        return inner
-
-    @functools.lru_cache(maxsize=None)
-    def __new__(cls, name):
-        """Pair a jumbled up MP name with a canonical name in the database.
-
-        >>> decipher_name('Καπθαιηάο Αληξέαο')   # Jesus take the wheel
-        'Καυκαλιάς Αντρέας'
-        >>> decipher_name('') is None
-        True
-        """
-        markers = tuple((i, c) for i, c in enumerate(name) if c in cls.MARKERS)
-        shortlist = filter(cls.filter_name(len(name), markers), cls.MPS)
-        try:
-            _, new_name = min([jellyfish.hamming_distance(name, v), v]
-                              for v in shortlist)
-            return new_name
-        except ValueError:
-            return
-
-decipher_name = _DecipherName
-
-
-class _CanonicaliseName:
-
-    # {'lastname firstname': 'Lastname Firstname', ...}
-    NAMES_NOM = {translit_unaccent_lc(mp['other_name']): mp['name']
-                 for mp in itertools.chain(
+    NAMES = itertools.chain(
         db.mps.aggregate([{'$project': {'name': '$name.el',
                                         'other_name': '$name.el'}}]),
         db.mps.aggregate([{'$unwind': '$other_names'},
                           {'$match': {'other_names.note': re.compile('el-Grek')
                                       }},
                           {'$project': {'name': '$name.el',
-                                        'other_name': '$other_names.name'}}]))}
+                                        'other_name': '$other_names.name'}}]))
+    NAMES = {mp['other_name']: mp['name'] for mp in NAMES}
+
+    # {'lastname firstname': 'Lastname Firstname', ...}
+    NAMES_NORM = {translit_unaccent_lc(k): v for k, v in NAMES.items()}
 
     # ((fore_1.sub, aft_1.sub), (fore_1.sub, aft_2.sub), ...,
     #  (fore_2.sub, aft_1.sub), ...)
@@ -279,19 +232,19 @@ class _CanonicaliseName:
                        for fore, aft in TRANSFORMS)
 
     @staticmethod
-    def prepare(name):
+    def _prepare_declined(name):
         """Clean up, normalise and tokenise the `name`."""
         name = ''.join(c for c in name if not c.isdigit())
         name = translit_unaccent_lc(name)
         return re.findall(r'\w+', name)
 
     @staticmethod
-    def permute(name, transforms):
+    def _permute_declined(name, transforms):
         r"""Apply all of the `transforms` to a `name`, returning a set.
 
-        >>> (_CanonicaliseName.permute(
-        ...      _CanonicaliseName.prepare('Γιαννάκη Ομήρου'),
-        ...      _CanonicaliseName.TRANSFORMS) ==
+        >>> (CanonicaliseName._permute_declined(
+        ...      CanonicaliseName._prepare_declined('Γιαννάκη Ομήρου'),
+        ...      CanonicaliseName.TRANSFORMS) ==
         ...  {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
         ...   'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'})
         True
@@ -302,37 +255,59 @@ class _CanonicaliseName:
         names = {' '.join(reversed(name)) for name in names}
         return names
 
+    @classmethod
     @functools.lru_cache(maxsize=None)
-    def __new__(cls, name):
+    def from_declined(cls, name_):
         """Pair a declined name with a canonical name in the database.
 
-        >>> _CanonicaliseName('Ρούλλας Μαυρονικόλα')
+        >>> CanonicaliseName.from_declined('Ρούλλας Μαυρονικόλα')
         'Μαυρονικόλα Ρούλα'
-        >>> _CanonicaliseName('gibber ish') is None
+        >>> CanonicaliseName.from_declined('gibber ish') is None
         True
-        >>> _CanonicaliseName('gibberish')  # doctest: +ELLIPSIS
+        >>> CanonicaliseName.from_declined('gibberish')  # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        ValueError: Incompatible name 'gibberish'
-        >>> _CanonicaliseName('a b c d')    # doctest: +ELLIPSIS
+        ValueError: Too few or too many tokens in 'gibberish'
+        >>> CanonicaliseName.from_declined('a b c d')    # doctest: +ELLIPSIS
         Traceback (most recent call last):
             ...
-        ValueError: Incompatible name 'a b c d'
+        ValueError: Too few or too many tokens in 'a b c d'
         """
-        orig_name, name = name, cls.prepare(name)
-        # NameConverter can only handle two- and three-part names
+        name = cls._prepare_declined(name_)
         if not 1 < len(name) <= 3:
-            raise ValueError('Incompatible name {!r}'.format(orig_name))
+            raise ValueError('Too few or too many tokens in {!r}'.format(name_))
 
-        names = cls.permute(name, cls.TRANSFORMS)
-        match = names & cls.NAMES_NOM.keys()
+        match = cls._permute_declined(name, cls.TRANSFORMS) & \
+            cls.NAMES_NORM.keys()
         if match:
-            return cls.NAMES_NOM[match.pop()]
+            return cls.NAMES_NORM[match.pop()]
 
-match_declined_name = _CanonicaliseName
+    @classmethod
+    @functools.lru_cache(maxsize=None)
+    def from_garbled(cls, name):
+        """Pair a jumbled up MP name with a canonical name in the database.
+
+        >>> CanonicaliseName.from_garbled('Καπθαιηάο Αληξέαο')   # Jesus take the wheel
+        'Καυκαλιάς Αντρέας'
+        >>> CanonicaliseName.from_garbled('') is None
+        True
+        """
+        if not name:
+            return
+        try:
+            return cls.NAMES[name]
+        except KeyError:
+            try:
+                _, new_name = min((jellyfish.levenshtein_distance(name, v), v)
+                                  for v in cls.NAMES.values())
+                return new_name
+            except ValueError:
+                return
 
 
-def parse_short_date(date_string):
+def parse_short_date(
+        date_string,
+        _RE_DATE=re.compile(r'(\d{1,2})/(\d{1,2})[\\/]{0,2}(\d{4})')):
     """Convert a slash-delimited 'short' date into an ISO date.
 
     >>> parse_short_date('3/52014')
@@ -348,7 +323,7 @@ def parse_short_date(date_string):
         ...
     ValueError: Unable to disassemble date in ...
     """
-    date = re.search(r'(\d{1,2})/(\d{1,2})[\\/]{0,2}(\d{4})', date_string)
+    date = _RE_DATE.search(date_string)
     try:
         return '{}-{:02d}-{:02d}'.format(*map(int, reversed(date.groups())))
     except AttributeError:
@@ -356,7 +331,13 @@ def parse_short_date(date_string):
             'Unable to disassemble date in {!r}'.format(date_string)) from None
 
 
-def parse_long_date(date_string, plenary=False):
+def parse_long_date(
+        date_string, plenary=False,
+        _RE_DATE=re.compile(r'(\d{1,2})(?:[αηή]ς?)? (\w+) (\d{4})'),
+        _EL_MONTHS=dict(zip(map(translit_unaccent_lc,
+                                icu.DateFormatSymbols(icu.Locale('el'))
+                                   .getMonths()), range(1, 13)))
+         ):
     """Convert a 'long' date in Greek into an ISO date.
 
     >>> parse_long_date('3 Μαΐου 2014')
@@ -388,60 +369,26 @@ def parse_long_date(date_string, plenary=False):
     if plenary and date_string in PLENARY_EXCEPTIONS:
         return PLENARY_EXCEPTIONS[date_string]
 
-    MONTHS = dict(zip(map(translit_unaccent_lc,
-                          icu.DateFormatSymbols(icu.Locale('el')).getMonths()),
-                      range(1, 13)))  # {'ιανουαριος': 1, ...}
     try:
-        d, m, y = re.search(r'(\d{1,2})(?:ης?)? (\w+) (\d{4})',
-                            date_string).groups()
+        d, m, y = _RE_DATE.search(date_string).groups()
     except AttributeError:
         raise ValueError(
             'Unable to disassemble date in {!r}'.format(date_string)) from None
     try:
         return '{}-{:02d}-{:02d}'.format(
-            *map(int, (y, MONTHS[translit_unaccent_lc(m)], d)))
+            *map(int, (y, _EL_MONTHS[translit_unaccent_lc(m)], d)))
     except KeyError:
         raise ValueError(
             'Malformed month in date {!r}'.format(date_string)) from None
 
 
-def parse_transcript_date(date_string):
-    """Extract dates and counters from transcript URLs.
-
-    >>> parse_transcript_date('2013-01-02')
-    (Date(date='2013-01-02', slug='2013-01-02'), True)
-    >>> parse_transcript_date('2013-01-02-2')
-    (Date(date='2013-01-02', slug='2013-01-02_2'), True)
-    >>> parse_transcript_date('http://www2.parliament.cy/parliamentgr/008_01/'
-    ...                       '008_02_IC/praktiko2013-12-30.pdf')
-    (Date(date='2014-01-30', slug='2014-01-30'), True)
-    >>> parse_transcript_date('gibberish')
-    ('gibberish', False)
-    """
-    Date = namedtuple('Date', 'date, slug')
-    success = True
-
-    EXCEPTIONS = {
-        'http://www2.parliament.cy/parliamentgr/008_01/'
-        '008_02_IC/praktiko2013-12-30.pdf': ('2014-01-30',)*2}
-    if date_string in EXCEPTIONS:
-        return Date(*EXCEPTIONS[date_string]), success
-
-    m = re.search(r'(\d{4}-\d{2}-\d{2})(?:-(\d))?', date_string.strip())
-    try:
-        dates = Date(m.group(1), '_'.join(filter(None, m.groups())))
-    except AttributeError:
-        dates = date_string
-        success = False
-    return dates, success
-
-
-def date2dato(date_string):
+def date2dato(date):
     """Convert a clear-text ISO date into a `datetime.date` object."""
-    return datetime.datetime.strptime(date_string, '%Y-%m-%d').date()
+    return datetime.datetime.strptime(date, '%Y-%m-%d').date()
 
 
-def clean_spaces(text, medial_newlines=False):
+def clean_spaces(text, medial_newlines=False,
+                 _RE_WHITESPACE=re.compile(r'[  ]+')):
     r"""Tidy up whitespace in strings.
 
     >>> clean_spaces('  dfsf\n   ds \n')
@@ -452,7 +399,7 @@ def clean_spaces(text, medial_newlines=False):
     if medial_newlines:
         text = text.split()
     else:
-        text = re.split(r'[  ]+', text.strip())
+        text = _RE_WHITESPACE.split(text.strip())
     return ' '.join(text)
 
 
