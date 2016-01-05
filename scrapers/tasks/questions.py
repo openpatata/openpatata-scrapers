@@ -80,7 +80,7 @@ RE_HEADING = re.compile(r'Ερώτηση με αρ\. (?P<id>[\d\.]+)'
                         r'(?P<date>[\w ]+)')
 
 # Chop off the district 'cause it could pass off as a name
-RE_NAMES_PREPARE = re.compile(r'.* περιφέρειας \w+')
+RE_NAMES_PREPARE = re.compile(r'.* περιφέρειας \w+ (?:κ\. )')
 
 #             name = first_name ' ' last_name
 #       first_name = name_part
