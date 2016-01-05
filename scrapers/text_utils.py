@@ -298,8 +298,9 @@ class CanonicaliseName:
             return cls.NAMES[name]
         except KeyError:
             try:
-                _, new_name = min((jellyfish.levenshtein_distance(name, v), v)
-                                  for v in cls.NAMES.values())
+                _, new_name = min((jellyfish.hamming_distance(name, v), v)
+                                  for v in cls.NAMES.values()
+                                  if len(v) == len(name))
                 return new_name
             except ValueError:
                 return
