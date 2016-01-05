@@ -105,7 +105,7 @@ class AgendaItems:
             agenda_items[k] = tuple(v)
         if None in agenda_items:
             logger.warning('Unparsed items {} in {!r}'.format(
-                tuple(k for k, _ in agenda_items[None]), url))
+                tuple(k for k, *_ in agenda_items[None]), url))
 
         return cls._AgendaItems(
             *map(lambda v: sorted(v, key=agenda_items_.index),

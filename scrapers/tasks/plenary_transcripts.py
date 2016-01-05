@@ -1,4 +1,5 @@
 
+from collections import namedtuple
 from datetime import date
 import itertools
 import logging
@@ -7,7 +8,9 @@ import re
 from scrapers.crawling import Task
 from scrapers.misc_utils import starfilter
 from scrapers import records
-from scrapers.tasks.plenary_agendas import (extract_parliamentary_period,
+from scrapers.tasks.plenary_agendas import (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
+                                            AgendaItems,
+                                            extract_parliamentary_period,
                                             extract_session)
 from scrapers.text_utils import (apply_subs, CanonicaliseName, clean_spaces,
                                  date2dato, parse_long_date, TableParser)
@@ -107,7 +110,7 @@ def _extract_attendees(url, text, heading, date):
 
     attendees = set(filter(None, (_extract_attendee_name(url, a)
                                   for t in attendee_table
-                                  for a in TableParser(t, max_cols=2).values)))
+                                  for a in TableParser(t, columns=2).values)))
     # The President's not listed among the attendees
     attendees = attendees | _select_president(date) if 'ΠΡΟΕΔΡΟΣ:' in heading \
         else attendees
@@ -124,12 +127,73 @@ def _extract_sitting(url, text):
         'Unable to extract sitting number of {!r}'.format(url))
 
 
+_Bill = namedtuple('Bill', 'identifier title submitted_by referred_to')
+
+
+def _extract_cap2_item(url, item):
+    try:
+        title, *other = item
+    except ValueError:
+        logger.warning('Unable to parse Chapter 2 item {}'
+                       ' in {!r}'.format(tuple(item), url))
+        return
+
+    id_ = RE_ID.search(title)
+    if not id_:
+        logger.info('Unable to extract document type'
+                    ' of {!r} in {!r}'.format([title] + other, url))
+        return
+
+    try:
+        return _Bill(id_.group(1), RE_TITLE_OTHER.sub('', title).rstrip('. '),
+                     *other)
+    except TypeError:
+        logger.warning('Unable to parse Chapter 2 item {}'
+                       ' in {!r}'.format([title] + other, url))
+
+
+RE_CAP2 = re.compile(r'\(Η κατάθεση νομοσχεδίων και εγγράφων\)(.*?)'
+                     r'(?:ΠΡΟΕΔΡΟΣ|ΠΡΟΕΔΡΕΥΩΝ|ΠΡΟΕΔΡΕΥΟΥΣΑ)', re.DOTALL)
+
+
+def _item_groupper():
+    counter, prev_length = 0, 0
+
+    def inner(item):
+        nonlocal counter, prev_length
+        new_length = sum(1 for v in item if v)  # Count 'truthy' values in list
+        if new_length > prev_length:
+            counter += 1
+        prev_length = new_length
+        return counter
+    return inner
+
+
+def _extract_cap2(url, text):
+    try:
+        item_table = RE_CAP2.search(text).group(1)
+    except AttributeError:
+        logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
+        return ()
+
+    item_table = item_table.replace('|', ' ').split('\x0c')
+    item_table = (RE_PAGE_NO.sub('', page) for page in item_table)
+
+    items = itertools.chain.from_iterable(TableParser(t, columns=4).rows
+                                          for t in item_table)
+    items = ((clean_spaces(' '.join(x), medial_newlines=True)
+              for x in itertools.islice(zip(*v), 1, None))
+             for _, v in itertools.groupby(items, key=_item_groupper()))
+    items = (_extract_cap2_item(url, item) for item in items)
+    return AgendaItems(url, tuple(filter(None, items))).bills_and_regs
+
+
 def _parse_transcript(url, text):
     heading = clean_spaces(text.partition('(')[0], medial_newlines=True)
     try:
         date = parse_long_date(heading)
     except ValueError as e:
-        logger.error('{} in {!r}'.format(e, url))
+        logger.error('{}; skipping {!r}'.format(e, url))
         return
 
     plenary_sitting = records.PlenarySitting.from_template(
@@ -146,3 +210,17 @@ def _parse_transcript(url, text):
             plenary_sitting.insert()
     except records.InsertError as e:
         logger.error(e)
+
+    for bill_ in _extract_cap2(url, text):
+        bill = records.Bill.from_template(
+            sources=(url,),
+            update={'identifier': bill_.identifier,
+                    'title': bill_.title,
+                    'actions': [{'action': 'submit',
+                                 'at': plenary_sitting['_filename'],
+                                 'by': bill_.submitted_by,
+                                 'refer_to': bill_.referred_to}]})
+        try:
+            bill.merge() if bill.exists else bill.insert()
+        except records.InsertError as e:
+            logger.error(e)

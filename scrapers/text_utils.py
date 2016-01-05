@@ -58,9 +58,9 @@ def html_to_lxml(url, text, clean=False):
 class TableParser:
     """A tool for sifting through plain-text tables."""
 
-    def __init__(self, text, max_cols=2):
+    def __init__(self, text, columns=2):
         self._lines = self._split_lines(text)
-        self._col_modes = self._calc_col_modes(max_cols)
+        self._col_modes = self._calc_col_modes(columns)
 
     @staticmethod
     def _split_lines(text):
@@ -90,8 +90,8 @@ class TableParser:
         """
         return tuple(m.end() for m in re.finditer(r'\s{2,}', line))
 
-    def _calc_col_modes(self, max_cols):
-        r"""The `self._max_cols` most common column indices in the table.
+    def _calc_col_modes(self, columns):
+        r"""The `columns` most common column indices in the table.
 
         >>> TableParser('''\
         ... Lorem ipsum   dolor sit   amet
@@ -102,7 +102,7 @@ class TableParser:
         col_freq = functools.reduce(
             lambda c, v: c + Counter(self._find_cols(v)),
             self._lines, Counter())
-        return tuple(sorted(dict(col_freq.most_common(max_cols-1))))
+        return tuple(sorted(dict(col_freq.most_common(columns-1))))
 
     @staticmethod
     def _adjust_col(line, col):

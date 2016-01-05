@@ -117,7 +117,8 @@ class _Record(dict):
 class Bill(_Record):
 
     collection = 'bills'
-    template = """{'identifier': None,
+    template = """{'actions': [],
+                   'identifier': None,
                    'title': None}"""
 
     def _construct_filename(self):
@@ -125,7 +126,12 @@ class Bill(_Record):
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)
-        return {'$set': value}
+        ins = {'$set': value,
+               '$addToSet': {'_sources': {'$each': value.pop('_sources')}}}
+        actions = value.pop('actions', None)
+        if actions:
+            ins['$addToSet'].update({'actions': {'$each': actions}})
+        return ins
 
 
 class CommitteeReport(_Record):
