@@ -34,7 +34,7 @@ def docx_to_text(buffer):
     with tempfile.NamedTemporaryFile() as file:   # Pandoc requires the input be a file when it's a binary
         file.write(buffer)
         return _text_from_sp(('pandoc',
-                              '--from=docx', '--to=plain', '--no-wrap',
+                              '--from=docx', '--to=plain', '--wrap=preserve',
                               file.name))
 
 
