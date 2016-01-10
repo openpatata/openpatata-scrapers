@@ -53,16 +53,15 @@ def _parse_committee_report(url, date, item):
     try:
         link = item.xpath('.//a[1]/@href')[0]
     except IndexError:
-        logger.error('Unable to extract link from {} in {!r}'.format(
-            item.text_content(), url))
+        logger.error('Unable to extract link'
+                     ' from {} in {!r}'.format(item.text_content(), url))
         return
 
     committee_report = records.CommitteeReport.from_template(
-        sources=(url,),
-        update={'date_circulated': date,
-                'title': clean_spaces(item.text_content(),
-                                      medial_newlines=True),
-                'url': link})
+        {'_sources': [url],
+         'date_circulated': date,
+         'title': clean_spaces(item.text_content(), medial_newlines=True),
+         'url': link})
     try:
         committee_report.insert()
     except records.InsertError as e:

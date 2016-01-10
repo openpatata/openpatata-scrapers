@@ -117,13 +117,13 @@ def _parse_question(url, heading, body, footer):
     answer_links = sorted(set(answer_links))
 
     question = records.Question.from_template(
-        sources=(url,),
-        update={'answers': answer_links,
-                'by': names,
-                'date': parse_long_date(match['date']),
-                'heading': heading.text.rstrip('.'),
-                'identifier': match['id'],
-                'text': '\n\n'.join(p.text for p in body).strip()})
+        {'_sources': [url],
+         'answers': answer_links,
+         'by': names,
+         'date': parse_long_date(match['date']),
+         'heading': heading.text.rstrip('.'),
+         'identifier': match['id'],
+         'text': '\n\n'.join(p.text for p in body).strip()})
     try:
         question.insert()
     except records.InsertError as e:

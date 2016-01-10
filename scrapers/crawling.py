@@ -11,16 +11,12 @@ import magic
 from pymongo import MongoClient
 
 from scrapers import config
-from scrapers.text_utils import (doc_to_text, docx_to_text, html_to_lxml,
+from scrapers.text_utils import (doc_to_text, docx_to_json, html_to_lxml,
                                  pdf_to_text)
 
 _CACHE = MongoClient()[config.CACHE_DB_NAME]
 _CACHE = namedtuple('_CACHE', 'file, text')(gridfs.GridFS(_CACHE),
                                             _CACHE['text'])
-
-
-class DecodeError(Exception):
-    """Error raised by `Crawler._decode_payload`."""
 
 
 class Crawler:
@@ -43,7 +39,8 @@ class Crawler:
         with aiohttp.ClientSession(
                 connector=aiohttp.TCPConnector(use_dns_cache=True),
                 loop=self._loop) as self._session:
-            task.after(self._loop.run_until_complete(task(self)()))
+            output = self._loop.run_until_complete(task(self)())
+        task.after(output)
 
     def exec_blocking(self, func):
         """Execute blocking operations independently of the async loop.
@@ -104,14 +101,16 @@ class Crawler:
         DECODE_FUNCS = {b'application/msword': doc_to_text,
                         b'application/pdf': pdf_to_text,
                         b'application/vnd.openxmlformats-officedocument.'
-                        b'wordprocessingml.document': docx_to_text}
+                        b'wordprocessingml.document': docx_to_json}
+
         try:
             decode_func = DECODE_FUNCS[magic.from_buffer(payload, mime=True)]
-        except AttributeError:
-            raise DecodeError('Unable to decode {!r};'
-                              ' unknown mime type'.format(url)) from None
+        except KeyError:
+            raise ValueError('Unable to decode {!r};'
+                             ' unknown mime type'.format(url)) from None
         else:
-            return await self.exec_blocking(decode_func)(payload)
+            return decode_func.__name__, \
+                await self.exec_blocking(decode_func)(payload)
 
     @classmethod
     def clear_cache(cls):

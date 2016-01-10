@@ -2,18 +2,21 @@
 from collections import namedtuple
 from datetime import date
 import itertools
+import json
 import logging
 import re
+
+import pandocfilters
 
 from scrapers.crawling import Task
 from scrapers.misc_utils import starfilter
 from scrapers import records
-from scrapers.tasks.plenary_agendas import (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
-                                            AgendaItems,
-                                            extract_parliamentary_period,
-                                            extract_session)
-from scrapers.text_utils import (apply_subs, CanonicaliseName, clean_spaces,
-                                 date2dato, parse_long_date, TableParser)
+from scrapers.tasks.plenary_agendas import \
+    RE_ID, RE_PAGE_NO, RE_TITLE_OTHER, \
+    AgendaItems, extract_parliamentary_period, extract_session
+from scrapers.text_utils import \
+    apply_subs, CanonicaliseName, clean_spaces, date2dato, pandoc_json_to, \
+    parse_long_date, TableParser
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +34,9 @@ class PlenaryTranscripts(Task):
             'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_ID.htm',
             'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IE.htm')
 
-        transcript_urls = await \
-            self.c.gather({self.process_transcript_listing(url)
-                           for url in listing_urls})
+        transcript_urls = \
+            await self.c.gather({self.process_transcript_listing(url)
+                                 for url in listing_urls})
         transcript_urls = itertools.chain.from_iterable(transcript_urls)
         return await self.c.gather({self.process_transcript(url)
                                     for url in transcript_urls})
@@ -45,7 +48,8 @@ class PlenaryTranscripts(Task):
         return html.xpath('//a[contains(@href, "praktiko")]/@href')
 
     async def process_transcript(self, url):
-        return url, await self.c.get_payload(url, decode=True)
+        func, content = await self.c.get_payload(url, decode=True)
+        return url, func, content
 
     @staticmethod
     def after(output):
@@ -87,23 +91,22 @@ def _select_president(date_):
         raise ValueError('No President found for {!r}'.format(date_)) from None
 
 
-SUBS = (('|', ''),
-        ('Παρόντες βουλευτές', '🌮'),
-        ('ΠΑΡΌΝΤΕΣ ΒΟΥΛΕΥΤΈΣ', '🌮'),      # pandoc
-        ('(Ώρα λήξης: 6.15 μ.μ.)', '🌮'),  # 2015-03-19
-        ('Παρόντες αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),
-        ('Αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),  # 2014-10-23
-        ('Περιεχόμενα', '🌯'),
-        ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),
-        ('Φακοντής Σοφοκλής', 'Φακοντής Αντρέας')  # s/e in 2011-12-13
-        )
+ATTENDEE_SUBS = (('|', ' '),
+                 ('Παρόντες βουλευτές', '🌮'),
+                 ('ΠΑΡΌΝΤΕΣ ΒΟΥΛΕΥΤΈΣ', '🌮'),      # pandoc
+                 ('(Ώρα λήξης: 6.15 μ.μ.)', '🌮'),  # 2015-03-19
+                 ('Παρόντες αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),
+                 ('Αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),  # 2014-10-23
+                 ('Περιεχόμενα', '🌯'),
+                 ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),
+                 ('Φακοντής Σοφοκλής', 'Φακοντής Αντρέας'))  # s/e in 2011-12-13
 
 
 def _extract_attendees(url, text, heading, date):
     # Split at page breaks 'cause the columns will have likely shifted
     # and strip off leading whitespace
-    attendee_table = (apply_subs(text, SUBS).rpartition('🌮')[2]
-                                            .partition('🌯')[0])
+    _, _, attendee_table = apply_subs(text, ATTENDEE_SUBS).rpartition('🌮')
+    attendee_table, _, _ = attendee_table.partition('🌯')
     attendee_table = attendee_table.split('\x0c')
     attendee_table = ('\n'.join(l.lstrip() for l in s.splitlines())
                       for s in attendee_table)
@@ -118,38 +121,36 @@ def _extract_attendees(url, text, heading, date):
     return attendees
 
 
-RE_SI = re.compile(r'Αρ\. (\d+)')
+RE_SITTING_NUMBER = re.compile(r'Αρ\. (\d+)')
 
 
 def _extract_sitting(url, text):
-    match = RE_SI.search(text)
+    match = RE_SITTING_NUMBER.search(text)
     return int(match.group(1)) if match else logger.warning(
         'Unable to extract sitting number of {!r}'.format(url))
 
 
-_Bill = namedtuple('Bill', 'identifier title submitted_by referred_to')
+_Cap2Item = namedtuple('Cap2Item', 'number title sponsors committees')
 
 
 def _extract_cap2_item(url, item):
+    if not item:
+        return
+
     try:
-        title, *other = item
+        title, sponsors, committees = item
     except ValueError:
         logger.warning('Unable to parse Chapter 2 item {}'
-                       ' in {!r}'.format(tuple(item), url))
+                       ' in {!r}'.format(item, url))
         return
 
     id_ = RE_ID.search(title)
     if not id_:
         logger.info('Unable to extract document type'
-                    ' of {!r} in {!r}'.format([title] + other, url))
+                    ' of {} in {!r}'.format(item, url))
         return
-
-    try:
-        return _Bill(id_.group(1), RE_TITLE_OTHER.sub('', title).rstrip('. '),
-                     *other)
-    except TypeError:
-        logger.warning('Unable to parse Chapter 2 item {}'
-                       ' in {!r}'.format([title] + other, url))
+    return _Cap2Item(id_.group(1), RE_TITLE_OTHER.sub('', title).rstrip('. '),
+                     sponsors, committees)
 
 
 RE_CAP2 = re.compile(r'\(Η κατάθεση νομοσχεδίων και εγγράφων\)(.*?)'
@@ -162,6 +163,16 @@ def _item_groupper():
     def inner(item):
         nonlocal counter, prev_length
         new_length = sum(1 for v in item if v)  # Count 'truthy' values in list
+        # The assumption here's that every new list item will contain all
+        # three of title, sponsor and committee on the first line, and that
+        # fewer than three items will wrap onto the next line.  Ya, it's pretty
+        # wonky.  Given how tight the columns are, it's extremely unlikely that
+        # the title's gonna fit inside the first line, but it _is_ probable
+        # that all three are gonna be of equal length (> 1) - especially if
+        # the bill's got multiple sponsors or is referred to several
+        # committees.  We're gonna have to resort to using a probabilistic
+        # parser (eventually), but regexes and my shitty logic do the job for
+        # now (well, sort of)
         if new_length > prev_length:
             counter += 1
         prev_length = new_length
@@ -174,52 +185,137 @@ def _extract_cap2(url, text):
         item_table = RE_CAP2.search(text).group(1)
     except AttributeError:
         logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
-        return ()
+        return
 
     item_table = item_table.replace('|', ' ').split('\x0c')
     item_table = (RE_PAGE_NO.sub('', page) for page in item_table)
 
     items = itertools.chain.from_iterable(TableParser(t, columns=4).rows
                                           for t in item_table)
-    items = ((clean_spaces(' '.join(x), medial_newlines=True)
-              for x in itertools.islice(zip(*v), 1, None))
+    # ((<title>, <sponsor>, <committee>), ...)
+    items = (tuple(clean_spaces(' '.join(x), medial_newlines=True)
+                   for x in itertools.islice(zip(*v), 1, None))
              for _, v in itertools.groupby(items, key=_item_groupper()))
     items = (_extract_cap2_item(url, item) for item in items)
-    return AgendaItems(url, tuple(filter(None, items))).bills_and_regs
+    # (Bill(<number>, <title>, <sponsor>, <committee>), ...)
+    items = tuple(filter(None, items))
+    if items:
+        # ((<number>, <number>, ...), (Bill, Bill, ...))
+        return next(zip(*items)), AgendaItems(url, items).bills_and_regs
 
 
-def _parse_transcript(url, text):
-    heading = clean_spaces(text.partition('(')[0], medial_newlines=True)
+def _walk_pandoc_ast(v):
+    return pandocfilters.walk(v, _stringify_pandoc_dicts, None, None)
+
+
+pandoc_ListNumberMarker = object()
+
+RE_LIST_NUMBER = re.compile(r'\d{1,2}\.$')
+
+
+class _Pandoc_Transforms:
+
+    AlignDefault = lambda _: None
+    OrderedList = lambda _: [pandoc_ListNumberMarker]
+    Para = lambda v: _walk_pandoc_ast(v)
+    Period = lambda _: '.'
+    Plain = lambda v: _walk_pandoc_ast(v)
+    Space = lambda _: ' '
+    Str = lambda v: pandoc_ListNumberMarker if RE_LIST_NUMBER.match(v) else v
+    Strong = lambda v: _walk_pandoc_ast(v)
+    Table = lambda v: v
+
+
+def _stringify_pandoc_dicts(key, value, format_, meta):
+    # Stringify all the `dict`s
+    return_value = getattr(_Pandoc_Transforms, key)(value)
+    if isinstance(return_value, list) and all(isinstance(i, str)
+                                              for i in return_value):
+        return_value = [''.join(return_value)]
+    return return_value
+
+
+def _locate_cap2_table(node):
+    if node['t'] != 'Table':
+        return
+    if pandocfilters.stringify(node).startswith('Νομοσχέδια'):
+        return True
+
+
+def _extract_pandoc_items(url, list_):
+    # Extract agenda items from the pandoc AST
+    for x in list_:
+        if not x:
+            continue
+        if isinstance(x[0], list) and x[0]:
+            if x[0] == [pandoc_ListNumberMarker]:
+                *title, number = x[1]
+                number, title, sponsors, committees = \
+                    map(' '.join, ([number], title, *x[2:]))
+                yield _Cap2Item(RE_ID.search(number).group(1),
+                                RE_TITLE_OTHER.sub('', title).rstrip('. '),
+                                sponsors, committees)
+            else:
+                yield from _extract_pandoc_items(url, x)
+
+
+def _extract_pandoc_cap2(url, content):
+    tables = filter(_locate_cap2_table, json.loads(content)[1])
+    try:
+        table = next(tables)
+    except StopIteration:
+        logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
+        return
+
+    items = tuple(_extract_pandoc_items(url, _walk_pandoc_ast([table])))
+    if items:
+        return next(zip(*items)), AgendaItems(url, items).bills_and_regs
+
+
+def _parse_transcript(url, func, content):
+    if func == 'docx_to_json':
+        text = pandoc_json_to(content, 'plain')
+    else:
+        text = content
+
+    heading, _, _ = text.partition('(')
+    heading = clean_spaces(heading, medial_newlines=True)
     try:
         date = parse_long_date(heading)
     except ValueError as e:
         logger.error('{}; skipping {!r}'.format(e, url))
         return
 
+    if func == 'docx_to_json':
+        cap2, bills_and_regs = _extract_pandoc_cap2(url, content) or \
+            ((), ())
+    else:
+        cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
+
     plenary_sitting = records.PlenarySitting.from_template(
-        sources=(url,),
-        update={'attendees': _extract_attendees(url, text, heading, date),
-                'date': date,
-                'links': [{'type': 'transcript', 'url': url}],
-                'parliamentary_period': extract_parliamentary_period(url,
-                                                                     heading),
-                'session': extract_session(url, heading),
-                'sitting': _extract_sitting(url, heading)})
+        {'_sources': [url],
+         'agenda': {'cap1': (), 'cap2': cap2, 'cap4': ()},
+         'attendees': _extract_attendees(url, text, heading, date),
+         'date': date,
+         'links': [{'type': 'transcript', 'url': url}],
+         'parliamentary_period': extract_parliamentary_period(url, heading),
+         'session': extract_session(url, heading),
+         'sitting': _extract_sitting(url, heading)})
     try:
         plenary_sitting.merge() if plenary_sitting.exists else \
             plenary_sitting.insert()
     except records.InsertError as e:
         logger.error(e)
 
-    for bill_ in _extract_cap2(url, text):
+    for bill_ in bills_and_regs:
         bill = records.Bill.from_template(
-            sources=(url,),
-            update={'identifier': bill_.identifier,
-                    'title': bill_.title,
-                    'actions': [{'action': 'submit',
-                                 'at': plenary_sitting['_filename'],
-                                 'by': bill_.submitted_by,
-                                 'refer_to': bill_.referred_to}]})
+            {'_sources': [url],
+             'identifier': bill_.number,
+             'title': bill_.title,
+             'actions': [{'action': 'submission',
+                          'at_plenary': plenary_sitting.uid,
+                          'sponsors': bill_.sponsors,
+                          'committees_referred_to': bill_.committees}]})
         try:
             bill.merge() if bill.exists else bill.insert()
         except records.InsertError as e:

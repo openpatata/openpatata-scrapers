@@ -52,9 +52,9 @@ def init(args):
         db.command('dropDatabase', 1)
 
         files = itertools.chain.from_iterable(map(
-            lambda dir: zip(
-                Path(import_path or config.IMPORT_PATH, dir).iterdir(),
-                itertools.repeat(dir)),
+            lambda dir_: zip(Path(import_path or
+                                  config.IMPORT_PATH, dir_).iterdir(),
+                             itertools.repeat(dir_)),
             dirs or config.IMPORT_DIRS))
         for path, collection in files:
             db[collection].insert_one(io.YamlManager.load_record(str(path),

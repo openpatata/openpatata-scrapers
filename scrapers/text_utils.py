@@ -29,13 +29,17 @@ def doc_to_text(buffer):
     return _text_from_sp(('antiword', '-w 0', '-'), buffer)
 
 
-def docx_to_text(buffer):
-    """Convert a `.docx` from `buffer` to plain text."""
+def docx_to_json(buffer):
+    """Convert a `.docx` from `buffer` to a pandoc AST."""
     with tempfile.NamedTemporaryFile() as file:   # Pandoc requires the input be a file when it's a binary
         file.write(buffer)
-        return _text_from_sp(('pandoc',
-                              '--from=docx', '--to=plain', '--wrap=preserve',
-                              file.name))
+        return _text_from_sp(('pandoc', '--from=docx', '--to=json', file.name))
+
+
+def pandoc_json_to(json, format_):
+    """Convert from pandoc JSON to any other format accepted by pandoc."""
+    return _text_from_sp(('pandoc', '--from=json', '--to='+format_),
+                         json.encode())
 
 
 def pdf_to_text(buffer):

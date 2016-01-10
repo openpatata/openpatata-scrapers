@@ -47,7 +47,7 @@ class PlenaryAgendas(Task):
 
     async def process_agenda(self, url):
         if url[-4:] == '.pdf':
-            payload = await self.c.get_payload(url, decode=True)
+            _, payload = await self.c.get_payload(url, decode=True)
             return _parse_pdf_agenda, (url, payload)
         else:
             html = await self.c.get_html(url)
@@ -142,9 +142,9 @@ def _extract_id_and_title(url, item):
             (id_, title), url))
 
 
-RE_PP = re.compile(r'_?(\w+?)[\'΄´] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
-RE_SE = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'΄´]')
-RE_SI = re.compile(r'(\d+)[ηή] ?συνεδρίαση')
+RE_PPERIOD = re.compile(r'_?(\w+?)[\'΄´] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
+RE_SESSION = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'΄´]')
+RE_SITTING_NUMBER = re.compile(r'(\d+)[ηή] ?συνεδρίαση')
 
 
 def extract_parliamentary_period(url, text):
@@ -158,7 +158,7 @@ def extract_parliamentary_period(url, text):
     >>> extract_parliamentary_period(..., '') is None
     True
     """
-    match = RE_PP.search(text)
+    match = RE_PPERIOD.search(text)
     return ungarble_qh(match.group(1)) if match else logger.warning(
         'Unable to extract parliamentary period of {!r}'.format(url))
 
@@ -169,7 +169,7 @@ def extract_session(url, text):
     >>> extract_session(..., 'Ι΄ ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟΔΟΣ - ΣΥΝΟΔΟΣ Ε΄')
     'Ε'
     """
-    match = RE_SE.search(text)
+    match = RE_SESSION.search(text)
     return ungarble_qh(match.group(1)) if match else logger.warning(
         'Unable to extract session of {!r}'.format(url))
 
@@ -180,7 +180,7 @@ def extract_sitting(url, text):
     >>> extract_sitting(..., '17η συνεδρίαση')
     17
     """
-    match = RE_SI.search(text)
+    match = RE_SITTING_NUMBER.search(text)
     return int(match.group(1)) if match else logger.warning(
         'Unable to extract sitting number of {!r}'.format(url))
 
@@ -197,17 +197,16 @@ def _parse_agenda(url, html):
     text = clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
 
     plenary_sitting = records.PlenarySitting.from_template(
-        sources=(url,),
-        update={'agenda': {'debate': tuple(i for i, _ in agenda_items.part_d),
-                           'legislative_work': tuple(i for i, _ in
-                                                     agenda_items.part_a)},
-                'date': parse_long_date(clean_spaces(
-                    html.xpath('string(//h1)')), plenary=True),
-                'links': [{'type': 'agenda', 'url': url}],
-                'parliamentary_period': extract_parliamentary_period(url,
-                                                                     text),
-                'session': extract_session(url, text),
-                'sitting': extract_sitting(url, text)})
+        {'_sources': [url],
+         'agenda': {'cap1': tuple(i for i, _ in agenda_items.part_a),
+                    'cap2': (),
+                    'cap4': tuple(i for i, _ in agenda_items.part_d)},
+         'date': parse_long_date(clean_spaces(html.xpath('string(//h1)')),
+                                 plenary=True),
+         'links': [{'type': 'agenda', 'url': url}],
+         'parliamentary_period': extract_parliamentary_period(url, text),
+         'session': extract_session(url, text),
+         'sitting': extract_sitting(url, text)})
     try:
         plenary_sitting.merge() if plenary_sitting.exists else \
             plenary_sitting.insert()
@@ -261,17 +260,16 @@ def _parse_pdf_agenda(url, text):
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
     plenary_sitting = records.PlenarySitting.from_template(
-        sources=(url,),
-        update={'agenda': {'debate': tuple(i for i, _ in agenda_items.part_d),
-                           'legislative_work': tuple(i for i, _ in
-                                                     agenda_items.part_a)},
-                'date': parse_long_date(clean_spaces(
-                    pages[0], medial_newlines=True), plenary=True),
-                'links': [{'type': 'agenda', 'url': url}],
-                'parliamentary_period': extract_parliamentary_period(url,
-                                                                     text),
-                'session': extract_session(url, text),
-                'sitting': extract_sitting(url, text)})
+        {'_sources': [url],
+         'agenda': {'cap1': tuple(i for i, _ in agenda_items.part_a),
+                    'cap2': (),
+                    'cap4': tuple(i for i, _ in agenda_items.part_d)},
+         'date': parse_long_date(clean_spaces(pages[0], medial_newlines=True),
+                                 plenary=True),
+         'links': [{'type': 'agenda', 'url': url}],
+         'parliamentary_period': extract_parliamentary_period(url, text),
+         'session': extract_session(url, text),
+         'sitting': extract_sitting(url, text)})
     try:
         plenary_sitting.merge() if plenary_sitting.exists else \
             plenary_sitting.insert()
@@ -285,7 +283,7 @@ def _parse_pdf_agenda(url, text):
 
 def _parse_agenda_bill(url, id_, title):
     bill = records.Bill.from_template(
-        sources=(url,), update={'identifier': id_, 'title': title})
+        {'_sources': [url], 'identifier': id_, 'title': title})
     if not bill.exists:
         try:
             bill.insert()

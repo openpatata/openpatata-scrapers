@@ -1,7 +1,8 @@
 
 """Models for our records."""
 
-from collections import OrderedDict
+from collections import defaultdict, OrderedDict
+import functools
 import itertools
 from pathlib import Path
 import re
@@ -9,6 +10,22 @@ import re
 import pymongo
 
 from scrapers import db
+from scrapers.misc_utils import starfilter
+
+
+_after_init_hooks = defaultdict(list)
+
+
+def _class_name_of_method(method):
+    class_name, _, _ = method.__qualname__.rpartition('.')
+    return class_name
+
+
+def _hook_method_to(hook, method):
+    hook[_class_name_of_method(method)] += [method]
+    del method
+
+_after_init = functools.partial(_hook_method_to, _after_init_hooks)
 
 
 class InsertError(Exception):
@@ -29,17 +46,8 @@ class _Record(dict):
                 yield pk, value
         return inner(self)
 
-    def _construct_filename(self):
-        """Subclass to construct the `_filename` at initialisation."""
-        raise NotImplementedError
-
-    def _prepare_insert(self, compact):
-        """Subclass to prepare a _Record for `self.insert`."""
-        return getattr(self, 'compact' if compact else 'unwrap')().ordered
-
-    @property
-    def ordered(self):
-        """Traverse the _Record to sort it and all sub-dicts alphabetically."""
+    def _sort(self):
+        # Traverse the _Record to sort it and all sub-dicts alphabetically.
         def inner(value):
             if isinstance(value, dict):
                 return OrderedDict(itertools.starmap(
@@ -52,61 +60,78 @@ class _Record(dict):
                         (self.__class__, OrderedDict), {})
         return new_type(inner(self))
 
-    def unwrap(self):
-        r"""Flatten the _Record recursively.
+    def _unwrap(self):
+        """Flatten the _Record recursively.
 
-        >>> (_Record({'a': {'b': {'c': [1, 2], 'd': 3}},
-        ...           'e': {'f': ''}}).unwrap() ==
-        ...  {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''})
+        >>> (_Record({'a': {'b': {'c': [1, 2], 'd': 3}}, 'e': {'f': ''}})
+        ...  ._unwrap() == {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''})
         True
         """
-        return self.__class__(self._rekey(lambda a, b: (
-            '.'.join((a, b)) if a else b)))
+        return self.__class__(self._rekey(
+            lambda a, b: '.'.join((a, b)) if a else b))
 
-    def compact(self):
-        r"""Filter out boolean `False` values after flattening.
+    def _compact(self):
+        """Filter out boolean `False` values.
 
         This method is useful when updating an existing record, so as to
         not discard nested siblings.
 
-        >>> (_Record({'a': {'b': {'c': 1}}, 'd': {'e': ''}}).compact() ==
-        ...  {'a.b.c': 1})
+        >>> (_Record({'a': {'b': {'c': 1}}, 'd': ''})
+        ...  ._compact() == {'a': {'b': {'c': 1}}})
+        True
+        >>> (_Record({'a': {'b': {'c': 1}}, 'd': {'e': ''}})
+        ...  ._unwrap()._compact() == {'a.b.c': 1})
         True
         """
-        return self.__class__(filter(lambda i: bool(i[1]),
-                                     self.unwrap().items()))
+        return self.__class__(starfilter(lambda _, v: bool(v), self.items()))
 
     @property
     def exists(self):
         """See whether a `_Record` with the same `_filename` already exists."""
         return db[self.collection].find_one({'_filename': self['_filename']})
 
+    @property
+    def uid(self):
+        """The `_Record`'s unique id, defaulting to its filename."""
+        return self['_filename']
+
+    def _prepare_insert(self, compact):
+        return_value = self._unwrap()
+        if compact is True:
+            return_value = return_value._compact()
+        return return_value._sort()
+
     def insert(self, compact=False, upsert=True):
         """Insert a `_Record` in the database.
 
-        Returns the resulting document on success and raises `InsertError`
-        on failure.
+        `insert` returns the resulting document on success and
+        raises `InsertError` on failure.
         """
-        rval = db[self.collection].find_one_and_update(
-            filter={'_filename': self['_filename']},
-            update=self._prepare_insert(compact), upsert=upsert,
-            return_document=pymongo.ReturnDocument.AFTER)
-        if not rval:
-            raise InsertError('Unable to insert or merge {}'.format(self))
-        return rval
+        return_value = db[self.collection]\
+            .find_one_and_update(filter={'_filename': self['_filename']},
+                                 update=self._prepare_insert(compact),
+                                 upsert=upsert,
+                                 return_document=pymongo.ReturnDocument.AFTER)
+        if not return_value:
+            raise InsertError('Unable to insert or merge {!r}'.format(self))
+        return return_value
 
     def merge(self):
         """Convenience wrapper around `self.insert` for merging."""
         return self.insert(compact=True, upsert=False)
 
     @classmethod
-    def from_template(cls, sources=None, update=None):
+    def from_template(cls, update={}):
         """Pre-fill a _Record using its template."""
         value = cls(eval(cls.template))   # Fair bit easier than deep-copying
-        value['_sources'] = list(sources) if sources else []
-        if update:
-            value.update(update)
-        value['_filename'] = value._construct_filename()
+        value.update(update)
+        for hook in _after_init_hooks[cls.__name__]:
+            value = hook(value)
+        if not all(map(value.get, cls.required_properties + ('_filename',
+                                                             '_sources'))):
+            raise ValueError(', '.join(map(repr, cls.required_properties)) +
+                             ", '_filename' and '_sources' are required in " +
+                             repr(value))
         return value
 
     def __repr__(self):
@@ -120,9 +145,12 @@ class Bill(_Record):
     template = """{'actions': [],
                    'identifier': None,
                    'title': None}"""
+    required_properties = ('identifier', 'title')
 
+    @_after_init
     def _construct_filename(self):
-        return self['identifier']
+        self['_filename'] = self['identifier']
+        return self
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)
@@ -144,10 +172,13 @@ class CommitteeReport(_Record):
                    'text': None,
                    'title': None,
                    'url': None}"""
+    required_properties = ('title', 'url')
 
+    @_after_init
     def _construct_filename(self):
-        return '{}_{}'.format(self['date_circulated'] or '_',
-                              Path(self['url']).stem)
+        self['_filename'] = '{}_{}'.format(self['date_circulated'] or '_',
+                                           Path(self['url']).stem)
+        return self
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)
@@ -157,23 +188,27 @@ class CommitteeReport(_Record):
 class PlenarySitting(_Record):
 
     collection = 'plenary_sittings'
-    template = """{'agenda': {'debate': [],
-                              'legislative_work': []},
+    template = """{'agenda': {'cap1': [],
+                              'cap2': [],
+                              'cap4': []},
                    'attendees': [],
                    'date': None,
                    'links': [],
                    'parliamentary_period': None,
                    'session': None,
                    'sitting': None}"""
+    required_properties = ('date', 'parliamentary_period')
 
+    @_after_init
     def _construct_filename(self):
-        return '_'.join(map(str, (self['date'], self['parliamentary_period'],
-                                  self['session'], self['sitting'])))
+        self['_filename'] = '_'.join(map(str, (self['date'],
+                                               self['parliamentary_period'],
+                                               self['session'],
+                                               self['sitting'])))
+        return self
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)
-        value['date'] = value['date'].date if hasattr(value['date'], 'date') \
-            else value['date']
         ins = {'$addToSet': {}, '$set': value}
         source = value.pop('_sources')
         if source:
@@ -203,15 +238,18 @@ class Question(_Record):
                    'heading': None,
                    'identifier': None,
                    'text': None}"""
+    required_properties = ('date', 'heading', 'identifier', 'text')
 
+    @_after_init
     def _construct_filename(self):
         filename = self['identifier']
         other = db[self.collection].count(
             {'_filename': re.compile(r'{}(_\d+)?$'.format(filename))})
         if other:
-            return '{}_{}'.format(filename, other+1)
+            self['_filename'] = '{}_{}'.format(filename, other+1)
         else:
-            return filename
+            self['_filename'] = filename
+        return self
 
     def _prepare_insert(self, compact):
         value = super()._prepare_insert(compact)

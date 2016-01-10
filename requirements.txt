@@ -2,6 +2,7 @@ aiohttp
 docopt
 jellyfish
 lxml
+pandocfilters
 PyICU
 pymongo
 python-magic
