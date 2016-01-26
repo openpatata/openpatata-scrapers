@@ -1,5 +1,6 @@
 
 from collections import defaultdict, namedtuple
+import functools as ft
 import itertools as it
 import logging
 import re
@@ -188,10 +189,13 @@ def extract_sitting(url, text):
         'Unable to extract sitting number of {!r}'.format(url))
 
 
+RE_JUNK = re.compile(r'^ *([\.…]+)', re.MULTILINE)
+
+
 def _parse_agenda(url, html):
     text = clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
 
-    agenda_items = (clean_spaces(agenda_item.text_content(),
+    agenda_items = (clean_spaces(RE_JUNK.sub('', agenda_item.text_content()),
                                  medial_newlines=True)
                     for agenda_item in html.xpath('//div[@class="articleBox"]'
                                                   '//tr'))
@@ -234,6 +238,13 @@ def _group_items_of_pdf():
     return inner
 
 
+
+def _clean_title_text(text):
+    return ft.reduce(lambda s, j: ''.join((s[:j.start()], ' '*len(j.group(1)),
+                                           s[j.end():])),
+                     RE_JUNK.finditer(text), text)
+
+
 def _parse_pdf_agenda(url, text):
     if (url == 'http://www.parliament.cy/images/media/redirectfile/'
                '13-0312015- agenda ΤΟΠΟΘΕΤΗΣΕΙΣ doc.pdf'):
@@ -242,8 +253,9 @@ def _parse_pdf_agenda(url, text):
         return
 
     # Split the text at page breaks 'cause the table shifts from page to page
-    pages = text.split('\x0c')
-    # Get rid of the page numbers 'cause they might intersect items in the list
+    pages = _clean_title_text(text).split('\x0c')
+    # And get rid of the page numbers 'cause they might intersect items in
+    # the list
     pages = tuple(RE_PAGE_NO.sub('', page) for page in pages if page)
 
     rows_ = it.chain.from_iterable(TableParser(page).rows for page in pages)
