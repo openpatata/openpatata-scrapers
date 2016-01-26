@@ -306,12 +306,13 @@ def _parse_transcript(url, func, content):
     for bill_ in bills_and_regs:
         bill = records.Bill(
             {'_sources': [url],
+             'actions': [{'action': 'submission',
+                          'at_plenary': plenary_sitting.data['_filename'],
+                          'sponsors': bill_.sponsors,
+                          'committees_referred_to': bill_.committees}],
              'identifier': bill_.number,
              'title': bill_.title,
-             'actions': [{'action': 'submission',
-                          'at_plenary': plenary_sitting.uid,
-                          'sponsors': bill_.sponsors,
-                          'committees_referred_to': bill_.committees}]})
+             'other_titles': [bill_.title],})
         try:
             bill.insert(merge=bill.exists)
         except records.InsertError as e:

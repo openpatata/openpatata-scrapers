@@ -21,10 +21,11 @@ class BaseRecord:
     """A base class for our records."""
 
     def __init__(self, data, is_raw=False):
+        self._value_in_db = None
+
         if is_raw is True:
             self.data = deepcopy(data)
             return
-
         self.data = deepcopy(self.template)
         self.data.update(data)
         for update in self._on_init_transforms():
@@ -110,34 +111,43 @@ class BaseRecord:
              db[self.collection].find_one_and_delete(filter=filter_)
 
         for insert in self._prepare_inserts(data, merge):
-            return_value = db[self.collection].find_one_and_update(
-                filter=filter_,
-                update=insert,
-                upsert=not merge,
-                return_document=pymongo.ReturnDocument.AFTER)
+            return_value = self._value_in_db = \
+                db[self.collection].find_one_and_update(
+                    filter=filter_,
+                    update=insert,
+                    upsert=not merge,
+                    return_document=pymongo.ReturnDocument.AFTER)
             if not return_value:
-                raise InsertError('Unable to insert or merge {!r}'.format(self))
+                raise InsertError('Unable to insert or merge ' + repr(self))
         return return_value
 
 
 class Bill(BaseRecord):
 
     collection = 'bills'
-    template = {'actions': [], 'identifier': None, 'title': None}
-    required_properties = ('identifier', 'title')
+    template = {'actions': [],
+                'identifier': None,
+                'title': None,
+                'other_titles': []}
+    required_properties = ('identifier', 'title', 'other_titles')
 
     def _on_init_transforms(self):
         return {'_filename': self.data['identifier']},
 
     def _prepare_inserts(self, data, merge):
-        ins = {'$set': data,
-               '$addToSet': {'_sources': {'$each': data.pop('_sources')}}}
-        actions = data.pop('actions', None)
-        if actions:
-            ins['$addToSet'].update({'actions': {'$each': actions}})
-        return ins, \
-            {'$push': {'_sources': {'$each': [], '$sort': 1},
-                       'actions': {'$each': [], '$sort': {'at_plenary': 1}}}}
+        yield {'$set': data,
+               '$addToSet': {'_sources': {'$each': data.pop('_sources')},
+                             'actions': {'$each': data.pop('actions', [])}
+                             'other_titles': {'$each': data.pop('other_titles')
+                                              }}}
+        other_titles = sorted(self._value_in_db['other_titles'],
+                              key=lambda v: tuple(reversed(v.rpartition(' ')))
+                              )
+        yield {'$push': {'_sources': {'$each': [], '$sort': 1},
+                         'actions': {'$each': [], '$sort': {'at_plenary': 1}}},
+               '$set': {'other_titles': other_titles}}
+        # <Pause to allow for the value of `self._value_in_db` to be updated>
+        yield {'$set': {'title': self._value_in_db['other_titles'][-1]}}
 
 
 class CommitteeReport(BaseRecord):

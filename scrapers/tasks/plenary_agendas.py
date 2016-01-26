@@ -212,7 +212,8 @@ def _parse_agenda(url, html):
          'sitting': extract_sitting(url, text)}), \
         it.starmap(lambda id_, title: records.Bill({'_sources': [url],
                                                     'identifier': id_,
-                                                    'title': title}),
+                                                    'title': title,
+                                                    'other_titles': [title]}),
                    agenda_items.bills_and_regs)
 
 
@@ -267,5 +268,6 @@ def _parse_pdf_agenda(url, text):
          'sitting': extract_sitting(url, text)}), \
         it.starmap(lambda id_, title: records.Bill({'_sources': [url],
                                                     'identifier': id_,
-                                                    'title': title}),
+                                                    'title': title,
+                                                    'other_titles': [title]}),
                    agenda_items.bills_and_regs)
