@@ -2,6 +2,7 @@ aiohttp
 docopt
 jellyfish
 lxml
+nose
 pandocfilters
 PyICU
 pymongo

@@ -11,6 +11,7 @@ cache:
   - $HOME/.cache
 services:
 - mongodb
-script: python3 test_scrapers.py
+script: nosetests --ignore-files='^\\.' --ignore-files='^setup\\.py$'
+  --verbosity=3 --with-doctest scrapers
 notifications:
   email: false
