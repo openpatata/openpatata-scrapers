@@ -5,7 +5,7 @@ import itertools as it
 import logging
 import re
 
-from .. import records
+from . import _models as models
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date, TableParser,
                           ungarble_qh)
@@ -59,13 +59,13 @@ class PlenaryAgendas(Task):
                 filter(None, (fn(url, c) for fn, (url, c) in output)):
             try:
                 plenary_sitting.insert(merge=plenary_sitting.exists)
-            except records.InsertError as e:
+            except models.InsertError as e:
                 logger.error(e)
 
             for bill in bills:
                 try:
                     bill.insert(merge=bill.exists)
-                except records.InsertError as e:
+                except models.InsertError as e:
                     logger.error(e)
 
 
@@ -206,7 +206,7 @@ def _parse_agenda(url, html):
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
-    return records.PlenarySitting(
+    return models.PlenarySitting(
         {'_sources': [url],
          'agenda': {'cap1': [i for i, _ in agenda_items.part_a],
                     'cap2': [],
@@ -217,10 +217,10 @@ def _parse_agenda(url, html):
          'parliamentary_period': extract_parliamentary_period(url, text),
          'session': extract_session(url, text),
          'sitting': extract_sitting(url, text)}), \
-        it.starmap(lambda id_, title: records.Bill({'_sources': [url],
-                                                    'identifier': id_,
-                                                    'title': title,
-                                                    'other_titles': [title]}),
+        it.starmap(lambda id_, title: models.Bill({'_sources': [url],
+                                                   'identifier': id_,
+                                                   'title': title,
+                                                   'other_titles': [title]}),
                    agenda_items.bills_and_regs)
 
 
@@ -270,7 +270,7 @@ def _parse_pdf_agenda(url, text):
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
-    return records.PlenarySitting(
+    return models.PlenarySitting(
         {'_sources': [url],
          'agenda': {'cap1': [i for i, _ in agenda_items.part_a],
                     'cap2': [],
@@ -281,8 +281,8 @@ def _parse_pdf_agenda(url, text):
          'parliamentary_period': extract_parliamentary_period(url, text),
          'session': extract_session(url, text),
          'sitting': extract_sitting(url, text)}), \
-        it.starmap(lambda id_, title: records.Bill({'_sources': [url],
-                                                    'identifier': id_,
-                                                    'title': title,
-                                                    'other_titles': [title]}),
+        it.starmap(lambda id_, title: models.Bill({'_sources': [url],
+                                                   'identifier': id_,
+                                                   'title': title,
+                                                   'other_titles': [title]}),
                    agenda_items.bills_and_regs)

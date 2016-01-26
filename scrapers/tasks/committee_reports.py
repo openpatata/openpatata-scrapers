@@ -2,7 +2,7 @@
 import itertools as it
 import logging
 
-from .. import records
+from . import _models as models
 from ..crawling import Task
 from ..text_utils import clean_spaces, parse_short_date
 
@@ -56,12 +56,12 @@ def _parse_committee_report(url, date, item):
                      ' from {} in {!r}'.format(item.text_content(), url))
         return
 
-    committee_report = records.CommitteeReport(
+    committee_report = models.CommitteeReport(
         {'_sources': [url],
          'date_circulated': date,
          'title': clean_spaces(item.text_content(), medial_newlines=True),
          'url': link})
     try:
         committee_report.insert(merge=committee_report.exists)
-    except records.InsertError as e:
+    except models.InsertError as e:
         logger.error(e)

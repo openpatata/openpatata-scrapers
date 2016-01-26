@@ -8,7 +8,7 @@ import re
 
 import pandocfilters
 
-from .. import records
+from . import _models as models
 from ..crawling import Task
 from ..misc_utils import starfilter
 from ..tasks.plenary_agendas import \
@@ -289,7 +289,7 @@ def _parse_transcript(url, func, content):
     else:
         cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
 
-    plenary_sitting = records.PlenarySitting(
+    plenary_sitting = models.PlenarySitting(
         {'_sources': [url],
          'agenda': {'cap1': [], 'cap2': cap2, 'cap4': []},
          'attendees': _extract_attendees(url, text, heading, date),
@@ -300,11 +300,11 @@ def _parse_transcript(url, func, content):
          'sitting': _extract_sitting(url, heading)})
     try:
         plenary_sitting.insert(merge=plenary_sitting.exists)
-    except records.InsertError as e:
+    except models.InsertError as e:
         logger.error(e)
 
     for bill_ in bills_and_regs:
-        bill = records.Bill(
+        bill = models.Bill(
             {'_sources': [url],
              'actions': [{'action': 'submission',
                           'at_plenary': plenary_sitting.data['_filename'],
@@ -315,5 +315,5 @@ def _parse_transcript(url, func, content):
              'other_titles': [bill_.title],})
         try:
             bill.insert(merge=bill.exists)
-        except records.InsertError as e:
+        except models.InsertError as e:
             logger.error(e)

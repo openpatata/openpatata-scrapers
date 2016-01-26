@@ -5,7 +5,7 @@ import re
 
 from lxml.html import HtmlElement
 
-from .. import records
+from . import _models as models
 from ..crawling import Task
 from ..text_utils import (apply_subs, clean_spaces, CanonicaliseName,
                           parse_long_date, ungarble_qh)
@@ -117,7 +117,7 @@ def _parse_question(url, heading, body, footer):
     answer_links = it.chain.from_iterable(filter(None, answer_links))
     answer_links = sorted(set(answer_links))
 
-    question = records.Question(
+    question = models.Question(
         {'_sources': [url],
          'answers': answer_links,
          'by': names,
@@ -127,5 +127,5 @@ def _parse_question(url, heading, body, footer):
          'text': '\n\n'.join(p.text for p in body).strip()})
     try:
         question.insert()
-    except records.InsertError as e:
+    except models.InsertError as e:
         logger.error(e)
