@@ -86,20 +86,23 @@ class AgendaItems:
             else:
                 return super().__getitem__(key)
 
-    ITEM_TYPES = ('13.06',   # Budget-related decision—maybe?
-                  '23.01',   # Government bill
-                  '23.02',   # Members' bill
-                  '23.03',   # Draft regulations
-                  '23.04',   # Something or other to do with committees
-                  '23.05',   # Debate topic
-                  '23.10',   # Decision or draft resolution
-                  '23.15')   # Rules of order of the House
+    ITEM_TYPES = {
+        '13.06': re.compile(r'.*'),   # Budget-related decision—maybe?
+        '23.01': re.compile(r'23\.01\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$'),   # Government bill
+        '23.02': re.compile(r'23\.02\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$'),   # Members' bill
+        '23.03': re.compile(r'23\.03\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$'),   # Draft regulations
+        '23.04': re.compile(r'.*'),   # Something or other to do with committees
+        '23.05': re.compile(r'.*'),   # Debate topic
+        '23.10': re.compile(r'.*'),   # Decision or draft resolution
+        '23.15': re.compile(r'.*')}   # Rules of order of the House
 
     @classmethod
     def _group(cls, item):
-        key = item[0][:5]
-        if key in cls.ITEM_TYPES:
-            return key
+        id_, key = item[0], item[0][:5]
+        try:
+            return cls.ITEM_TYPES[key].match(id_) and key
+        except KeyError:
+            return
 
     _AgendaItems = namedtuple('AgendaItems', 'part_a part_d bills_and_regs')
 
