@@ -3,21 +3,21 @@
 
 from collections import OrderedDict
 from copy import deepcopy
-import itertools
+import itertools as it
 from pathlib import Path
 import re
 
 import pymongo
 
-from scrapers import db
-from scrapers.misc_utils import starfilter
+from . import db
+from .misc_utils import starfilter
 
 
 class InsertError(Exception):
     """Error raised when a database insert fails."""
 
 
-class _Record:
+class BaseRecord:
     """A base class for our records."""
 
     def __init__(self, data, is_raw=False):
@@ -29,19 +29,23 @@ class _Record:
         self.data.update(data)
         for update in self._on_init_transforms():
             self.data.update(update)
-        if not all(map(self.data.get, (self.required_properties +
-                                       ('_filename', '_sources')))):
+        if not all(map(self.data.get, it.chain(self.required_properties,
+                                               ('_filename', '_sources')
+                                               ))):
             raise ValueError(', '.join(map(repr, self.required_properties)) +
                              ", '_filename' and '_sources' are required in " +
                              repr(self))
 
-    def _compact(self):
-        """Filter out boolean `False` values, returning a copy of the `_Record`.
+    def __repr__(self):
+        return '<{}: {!r}>'.format(self.__class__.__name__, self.data)
 
-        >>> (_Record({'a': {'b': {'c': 1}}, 'd': ''}, is_raw=True)
+    def _compact(self):
+        """Filter out boolean `False` values, returning a copy of the `BaseRecord`.
+
+        >>> (BaseRecord({'a': {'b': {'c': 1}}, 'd': ''}, is_raw=True)
         ...  ._compact().data == {'a': {'b': {'c': 1}}})
         True
-        >>> (_Record({'a': {'b': {'c': 1}}, 'd': {'e': ''}}, is_raw=True)
+        >>> (BaseRecord({'a': {'b': {'c': 1}}, 'd': {'e': ''}}, is_raw=True)
         ...  ._unwrap()._compact().data == {'a.b.c': 1})
         True
         """
@@ -59,8 +63,8 @@ class _Record:
         """Traverse `self.data` to sort it and all sub-dicts alphabetically."""
         def sort(value):
             if isinstance(value, dict):
-                return OrderedDict(itertools.starmap(
-                    lambda k, v: (k, sort(v)), sorted(value.items())))
+                return OrderedDict(it.starmap(lambda k, v: (k, sort(v)),
+                                              sorted(value.items())))
             elif isinstance(value, list):
                 return list(map(sort, value))
             return value
@@ -68,9 +72,9 @@ class _Record:
         return self.__class__(OrderedDict(sort(self.data)), is_raw=True)
 
     def _unwrap(self):
-        """Flatten the `_Record` recursively, returning a copy of it.
+        """Flatten the `BaseRecord` recursively, returning a copy of it.
 
-        >>> (_Record({'a': {'b': {'c': [1, 2], 'd': 3}}, 'e': {'f': ''}},
+        >>> (BaseRecord({'a': {'b': {'c': [1, 2], 'd': 3}}, 'e': {'f': ''}},
         ...          is_raw=True)
         ...  ._unwrap().data == {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''})
         True
@@ -87,40 +91,36 @@ class _Record:
 
     @property
     def exists(self):
-        """See whether a `_Record` with the same `_filename` already exists."""
-        return db[self.collection]\
-            .find_one({'_filename': self.data['_filename']})
+        """See whether a `BaseRecord` with the same `_filename` already exists."""
+        filter_ = {'_filename': self.data['_filename']}
+        return bool(db[self.collection].find_one(filter=filter_))
 
-    def insert(self, compact=False, upsert=True):
-        """Insert a `_Record` in the database.
+    def insert(self, merge=False):
+        """Insert a `BaseRecord` in the database.
 
         `insert` returns the resulting document on success and
         raises `InsertError` on failure.
         """
-        data = self._unwrap()
-        if compact is True:
-            data = data._compact()
-        data = data._sort().data
+        data = self._unwrap()._sort().data
+        if merge is True:
+            data = self.__class__(data, is_raw=True)._compact().data
 
-        for insert in self._prepare_inserts(data, compact):
-            value = db[self.collection].find_one_and_update(
-                filter={'_filename': self.data['_filename']},
+        filter_ = {'_filename': self.data['_filename']}
+        if merge is not True:
+             db[self.collection].find_one_and_delete(filter=filter_)
+
+        for insert in self._prepare_inserts(data, merge):
+            return_value = db[self.collection].find_one_and_update(
+                filter=filter_,
                 update=insert,
-                upsert=upsert,
+                upsert=not merge,
                 return_document=pymongo.ReturnDocument.AFTER)
-        if not value:
-            raise InsertError('Unable to insert or merge {!r}'.format(self))
-        return value
-
-    def merge(self):
-        """Convenience wrapper around `self.insert` for merging."""
-        return self.insert(compact=True, upsert=False)
-
-    def __repr__(self):
-        return '<{}: {!r}>'.format(self.__class__.__name__, self.data)
+            if not return_value:
+                raise InsertError('Unable to insert or merge {!r}'.format(self))
+        return return_value
 
 
-class Bill(_Record):
+class Bill(BaseRecord):
 
     collection = 'bills'
     template = {'actions': [], 'identifier': None, 'title': None}
@@ -129,7 +129,7 @@ class Bill(_Record):
     def _on_init_transforms(self):
         return {'_filename': self.data['identifier']},
 
-    def _prepare_inserts(self, data, compact):
+    def _prepare_inserts(self, data, merge):
         ins = {'$set': data,
                '$addToSet': {'_sources': {'$each': data.pop('_sources')}}}
         actions = data.pop('actions', None)
@@ -140,7 +140,7 @@ class Bill(_Record):
                        'actions': {'$each': [], '$sort': {'at_plenary': 1}}}}
 
 
-class CommitteeReport(_Record):
+class CommitteeReport(BaseRecord):
 
     collection = 'committee_reports'
     template = {'attendees': [],
@@ -156,11 +156,11 @@ class CommitteeReport(_Record):
         return {'_filename': '_'.join((self.data['date_circulated'] or '_',
                                        Path(self.data['url']).stem))},
 
-    def _prepare_inserts(self, data, compact):
+    def _prepare_inserts(self, data, merge):
         return {'$set': data},
 
 
-class PlenarySitting(_Record):
+class PlenarySitting(BaseRecord):
 
     collection = 'plenary_sittings'
     template = {'agenda': {'cap1': [], 'cap2': [], 'cap4': []},
@@ -179,19 +179,16 @@ class PlenarySitting(_Record):
                                                 data['session'],
                                                 data['sitting'])))},
 
-    def _prepare_inserts(self, data, compact):
+    def _prepare_inserts(self, data, merge):
         ins = {'$set': data,
                '$addToSet': {'_sources': {'$each': data.pop('_sources')}}}
-        if compact:
-            debate = data.pop('agenda.debate', None)
-            if debate:
-                ins['$addToSet'].update({'agenda.debate': {'$each': debate}})
-
-            legislative_work = data.pop('agenda.legislative_work', None)
-            if legislative_work:
-                ins['$addToSet'].update(
-                    {'agenda.legislative_work': {'$each': legislative_work}})
-
+        if merge:
+            cap1 = data.pop('agenda.cap1', None)
+            if cap1:
+                ins['$addToSet'].update({'agenda.cap1': {'$each': cap1}})
+            cap4 = data.pop('agenda.cap4', None)
+            if cap4:
+                ins['$addToSet'].update({'agenda.cap4': {'$each': cap4}})
             links = data.pop('links', None)
             if links:
                 ins['$addToSet'].update({'links': {'$each': links}})
@@ -199,7 +196,7 @@ class PlenarySitting(_Record):
                                'links': {'$each': [], '$sort': {'type': 1}}}}
 
 
-class Question(_Record):
+class Question(BaseRecord):
 
     collection = 'questions'
     template = {'answers': [],
@@ -218,5 +215,5 @@ class Question(_Record):
             filename = '_'.join((filename, str(other + 1)))
         return {'_filename': filename},
 
-    def _prepare_inserts(self, data, compact):
+    def _prepare_inserts(self, data, merge):
         return {'$set': data},

@@ -24,7 +24,7 @@ from textwrap import dedent
 
 import docopt
 
-from scrapers import config, db, io
+from . import config, db, io
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +97,8 @@ def dump(args):
     def _dump(collection, path):
         collection = db[collection]
         if collection.count() == 0:
-            raise docopt.DocoptExit('Collection {!r} is empty'.format(
-                collection.full_name))
+            raise docopt.DocoptExit(
+                'Collection {!r} is empty'.format(collection.full_name))
 
         head = Path(path or config.EXPORT_PATH)/collection.name
         if not head.exists():

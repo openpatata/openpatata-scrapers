@@ -3,8 +3,8 @@
 
 from collections import Counter
 import datetime
-import functools
-import itertools
+import functools as ft
+import itertools as it
 import re
 import string
 import subprocess
@@ -15,8 +15,8 @@ import icu
 import jellyfish
 import lxml.html
 
-from scrapers import db
-from scrapers.misc_utils import starfilter
+from . import db
+from .misc_utils import starfilter
 
 
 def _text_from_sp(args, input_=None):
@@ -62,9 +62,10 @@ def html_to_lxml(url, text, clean=False):
 class TableParser:
     """A tool for sifting through plain-text tables."""
 
-    def __init__(self, text, columns=2):
+    def __init__(self, text, columns=None, confidence=0.9):
+        self._columns = columns
+        self._confidence = confidence
         self._lines = self._split_lines(text)
-        self._col_modes = self._calc_col_modes(columns)
 
     @staticmethod
     def _split_lines(text):
@@ -73,14 +74,12 @@ class TableParser:
         Additionally, remove blank lines.
 
         >>> TableParser('''
+        ... Lorem ipsum   dolor sit    amet
         ...
-        ... Lorem ipsum   dolor sit   amet
-        ...
-        ... consectetur   adipiscing  totes elit
-        ...
+        ... consectetur   adipiscing   totes elit
         ... ''')._lines         # doctest: +NORMALIZE_WHITESPACE
-        ('Lorem ipsum   dolor sit   amet',
-         'consectetur   adipiscing  totes elit')
+        ('Lorem ipsum   dolor sit    amet',
+         'consectetur   adipiscing   totes elit')
         """
         lines = (line.rstrip() for line in text.splitlines())
         return tuple(filter(None, lines))
@@ -89,24 +88,32 @@ class TableParser:
     def _find_cols(line):
         """The leading-edge indices of hypothetical columns within a line.
 
-        >>> TableParser._find_cols('Lorem ipsum   dolor sit   amet')
-        (14, 26)
+        >>> TableParser._find_cols('Lorem ipsum   dolor sit    amet')
+        (14, 27)
         """
         return tuple(m.end() for m in re.finditer(r'\s{2,}', line))
 
-    def _calc_col_modes(self, columns):
-        r"""The `columns` most common column indices in the table.
+    def _calc_col_modes(self):
+        r"""The most common column indices in the table.
 
-        >>> TableParser('''\
-        ... Lorem ipsum   dolor sit   amet
-        ... consectetur   adipiscing  totes elit
-        ... ''', 3)._col_modes
-        (14, 26)
+        >>> TableParser('''
+        ... Lorem ipsum   dolor sit    amet
+        ... consectetur   adipiscing   totes elit
+        ... ''')._calc_col_modes()
+        (14, 27)
         """
-        col_freq = functools.reduce(
-            lambda c, v: c + Counter(self._find_cols(v)),
-            self._lines, Counter())
-        return tuple(sorted(dict(col_freq.most_common(columns-1))))
+        col_freq = ft.reduce(lambda c, v: c + Counter(self._find_cols(v)),
+                             self._lines, Counter())
+        if not col_freq:
+            return ()
+
+        if self._columns:
+            return tuple(sorted(i for i, _ in
+                                col_freq.most_common(self._columns-1)))
+        else:
+            (_, most_common), = col_freq.most_common(1)
+            return tuple(sorted(k for k, v in col_freq.items()
+                                if v/most_common >= self._confidence))
 
     @staticmethod
     def _adjust_col(line, col):
@@ -128,46 +135,47 @@ class TableParser:
         'cause it's easier that way.  Misaligned columns are translated to
         the left.
 
-        >>> TableParser._chop_line('Lorem ipsum   dolor sit   amet',
-        ...                        (14, 26))
+        >>> TableParser._chop_line('Lorem ipsum   dolor sit    amet',
+        ...                        (14, 27))
         ('Lorem ipsum', 'dolor sit', 'amet')
-        >>> TableParser._chop_line('Lorem ipsum   dolor sit   amet',
-        ...                        (16, 26))  # col '16' overlaps 'dolor'
+        >>> TableParser._chop_line('Lorem ipsum   dolor sit    amet',
+        ...                        (16, 27))  # col '16' overlaps 'dolor'
         ('Lorem ipsum', 'dolor sit', 'amet')
         """
-        cols = tuple(itertools.chain((0,), map(cls._adjust_col,
-                                               itertools.repeat(line), cols)))
-        cols = itertools.starmap(slice, itertools.zip_longest(cols, cols[1:]))
+        cols = it.tee(it.chain((0,), map(cls._adjust_col,
+                                         it.repeat(line), cols)))
+        cols = it.starmap(slice, it.zip_longest(cols[0],
+                                                it.islice(cols[1], 1, None)))
         return tuple(map(lambda line, slice_: line[slice_].strip(),
-                         itertools.repeat(line), cols))
+                         it.repeat(line), cols))
 
     @property
     def rows(self):
         r"""Produce a cols within a row matrix, sans any blank rows.
 
-        >>> TableParser('''\
-        ... Lorem ipsum   dolor sit   amet
-        ... consectetur   adipiscing  totes elit
-        ... ''', 3).rows       # doctest: +NORMALIZE_WHITESPACE
+        >>> TableParser('''
+        ... Lorem ipsum   dolor sit    amet
+        ... consectetur   adipiscing   totes elit
+        ... ''').rows       # doctest: +NORMALIZE_WHITESPACE
         (('Lorem ipsum', 'dolor sit',  'amet'),
          ('consectetur', 'adipiscing', 'totes elit'))
         """
         rows = map(self._chop_line,
-                   self._lines, itertools.repeat(self._col_modes))
+                   self._lines, it.repeat(self._calc_col_modes()))
         return tuple(filter(any, rows))
 
     @property
     def values(self):
         r"""Parse all values linearly, sans any empty strings.
 
-        >>> TableParser('''\
-        ... Lorem ipsum   dolor sit   amet
-        ... consectetur   adipiscing  totes elit
-        ... ''', 3).values     # doctest: +NORMALIZE_WHITESPACE
+        >>> TableParser('''
+        ... Lorem ipsum   dolor sit    amet
+        ... consectetur   adipiscing   totes elit
+        ... ''').values     # doctest: +NORMALIZE_WHITESPACE
         ('Lorem ipsum', 'dolor sit',  'amet',
          'consectetur', 'adipiscing', 'totes elit')
         """
-        values = itertools.chain.from_iterable(self.rows)
+        values = it.chain.from_iterable(self.rows)
         return tuple(filter(None, values))
 
 
@@ -212,7 +220,7 @@ def ungarble_qh(text, _LATN2GREK=str.maketrans('’AB∆EZHIKMNOPTYXvo',
 
 class CanonicaliseName:
 
-    NAMES = itertools.chain(
+    NAMES = it.chain(
         db.mps.aggregate([{'$project': {'name': '$name.el',
                                         'other_name': '$name.el'}}]),
         db.mps.aggregate([{'$unwind': '$other_names'},
@@ -229,10 +237,10 @@ class CanonicaliseName:
     #  (fore_2.sub, aft_1.sub), ...)
     TRANSFORMS = ([(r'', ''), (r'$', 'ς'), (r'ου$', 'ος'), (r'ς$', '')],  # fore
                   [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος')])               # aft
-    TRANSFORMS = itertools.product(*([(re.compile(p), r) for p, r in v]
-                                     for v in TRANSFORMS))
-    TRANSFORMS = tuple((functools.partial(fore[0].sub, fore[1]),
-                        functools.partial(aft[0].sub, aft[1]))
+    TRANSFORMS = it.product(*([(re.compile(p), r) for p, r in v]
+                              for v in TRANSFORMS))
+    TRANSFORMS = tuple((ft.partial(fore[0].sub, fore[1]),
+                        ft.partial(aft[0].sub, aft[1]))
                        for fore, aft in TRANSFORMS)
 
     @staticmethod
@@ -260,7 +268,7 @@ class CanonicaliseName:
         return names
 
     @classmethod
-    @functools.lru_cache(maxsize=None)
+    @ft.lru_cache(maxsize=None)
     def from_declined(cls, name_):
         """Pair a declined name with a canonical name in the database.
 
@@ -287,7 +295,7 @@ class CanonicaliseName:
             return cls.NAMES_NORM[match.pop()]
 
     @classmethod
-    @functools.lru_cache(maxsize=None)
+    @ft.lru_cache(maxsize=None)
     def from_garbled(cls, name):
         """Pair a jumbled up MP name with a canonical name in the database.
 
@@ -443,4 +451,4 @@ def truncate_slug(slug, max_length=100, sep='-'):
 
 def apply_subs(orig_string, subs):
     """Apply a two-tuple list of substitutions to `orig_string`."""
-    return functools.reduce(lambda s, sub: s.replace(*sub), subs, orig_string)
+    return ft.reduce(lambda s, sub: s.replace(*sub), subs, orig_string)

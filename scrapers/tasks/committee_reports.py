@@ -1,10 +1,10 @@
 
-import itertools
+import itertools as it
 import logging
 
-from scrapers.crawling import Task
-from scrapers import records
-from scrapers.text_utils import clean_spaces, parse_short_date
+from .. import records
+from ..crawling import Task
+from ..text_utils import clean_spaces, parse_short_date
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class CommitteeReports(Task):
         committee_reports = \
             await self.c.gather({self.process_committee_report_listing(
                 href) for href in html.xpath('//a[@class="h3Style"]/@href')})
-        committee_reports = itertools.chain.from_iterable(committee_reports)
+        committee_reports = it.chain.from_iterable(committee_reports)
         return committee_reports
 
     __call__ = process_committee_report_index
@@ -28,7 +28,6 @@ class CommitteeReports(Task):
         html = await self.c.get_html(url, clean=True)
         return _parse_committee_report_listing(url, html)
 
-    @staticmethod
     def after(output):
         for committee_report in output:
             _parse_committee_report(*committee_report)
@@ -57,12 +56,12 @@ def _parse_committee_report(url, date, item):
                      ' from {} in {!r}'.format(item.text_content(), url))
         return
 
-    committee_report = records.CommitteeReport.from_template(
+    committee_report = records.CommitteeReport(
         {'_sources': [url],
          'date_circulated': date,
          'title': clean_spaces(item.text_content(), medial_newlines=True),
          'url': link})
     try:
-        committee_report.insert()
+        committee_report.insert(merge=committee_report.exists)
     except records.InsertError as e:
         logger.error(e)

@@ -1,13 +1,13 @@
 
 from collections import defaultdict, namedtuple
-import itertools
+import itertools as it
 import logging
 import re
 
-from scrapers.crawling import Task
-from scrapers import records
-from scrapers.text_utils import (clean_spaces, parse_long_date, TableParser,
-                                 ungarble_qh)
+from .. import records
+from ..crawling import Task
+from ..text_utils import (clean_spaces, parse_long_date, TableParser,
+                          ungarble_qh)
 
 logger = logging.getLogger(__name__)
 
@@ -17,33 +17,33 @@ class PlenaryAgendas(Task):
 
     async def process_agenda_index(self):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/290'
-        html = await self.crawler.get_html(url)
+        html = await self.c.get_html(url)
 
-        agenda_urls = await self.c.gather({self.process_agenda_listing(
-            href) for href in html.xpath('//a[@class="h3Style"]/@href')})
-        agenda_urls = itertools.chain.from_iterable(agenda_urls)
+        agenda_urls = await self.c.gather(
+            {self.process_agenda_listing_1p(href)
+             for href in html.xpath('//a[@class="h3Style"]/@href')})
+        agenda_urls = it.chain.from_iterable(agenda_urls)
         return await self.c.gather({self.process_agenda(href)
                                     for href in agenda_urls})
 
     __call__ = process_agenda_index
 
-    async def process_agenda_listing(self, url, form_data=None, pass_=1):
-        html = await self.c.get_html(url, form_data=form_data,
-                                     request_method='post')
+    async def process_agenda_listing_1p(self, url):
+        html = await self.c.get_html(url)
+        pages = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
+        if pages:
+            pages = {
+                self.process_agenda_listing_2p(
+                    url, form_data={'page': ''.join(filter(str.isdigit, p))})
+                for p in pages}
+            return it.chain.from_iterable(await self.c.gather(pages))
+        else:
+            return await self.process_agenda_listing_2p(url)
 
-        # Do a first pass to grab the URLs of all the numbered pages
-        if pass_ == 1:
-            pages = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
-            if pages:
-                return itertools.chain.from_iterable(
-                    await self.c.gather({self.process_agenda_listing(
-                        url,
-                        form_data={'page': ''.join(filter(str.isdigit, p))},
-                        pass_=2) for p in pages}))
-            else:
-                return await self.process_agenda_listing(url, pass_=2)
-        elif pass_ == 2:
-            return html.xpath('//a[@class="h3Style"]/@href')
+    async def process_agenda_listing_2p(self, url, form_data=None):
+        html = await self.c.get_html(
+            url, form_data=form_data, request_method='post')
+        return html.xpath('//a[@class="h3Style"]/@href')
 
     async def process_agenda(self, url):
         if url[-4:] == '.pdf':
@@ -53,15 +53,19 @@ class PlenaryAgendas(Task):
             html = await self.c.get_html(url)
             return _parse_agenda, (url, html)
 
-    @staticmethod
     def after(output):
-        # We've got a race condition between `Record.exists` and
-        # `Record.insert` and `merge`, so we gotta insert the agendas and
-        # the bills one at a time
-        bills_and_regs = itertools.chain.from_iterable(fn(*args)
-                                                       for fn, args in output)
-        for i in bills_and_regs:
-            _parse_agenda_bill(*i)
+        for plenary_sitting, bills in \
+                filter(None, (fn(url, c) for fn, (url, c) in output)):
+            try:
+                plenary_sitting.insert(merge=plenary_sitting.exists)
+            except records.InsertError as e:
+                logger.error(e)
+
+            for bill in bills:
+                try:
+                    bill.insert(merge=bill.exists)
+                except records.InsertError as e:
+                    logger.error(e)
 
 
 class AgendaItems:
@@ -77,8 +81,7 @@ class AgendaItems:
 
         def __getitem__(self, key):
             if isinstance(key, tuple):
-                return itertools.chain.from_iterable(map(super().__getitem__,
-                                                         key))
+                return it.chain.from_iterable(map(super().__getitem__, key))
             else:
                 return super().__getitem__(key)
 
@@ -101,7 +104,7 @@ class AgendaItems:
 
     def __new__(cls, url, agenda_items_):
         agenda_items = cls._AgendaItemDict(tuple)
-        for k, v in itertools.groupby(agenda_items_, key=cls._group):   # __init__ bypasses __setitem__ (maybe)
+        for k, v in it.groupby(agenda_items_, key=cls._group):   # __init__ bypasses __setitem__ (maybe)
             agenda_items[k] = tuple(v)
         if None in agenda_items:
             logger.warning('Unparsed items {} in {!r}'.format(
@@ -186,36 +189,31 @@ def extract_sitting(url, text):
 
 
 def _parse_agenda(url, html):
+    text = clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
+
     agenda_items = (clean_spaces(agenda_item.text_content(),
                                  medial_newlines=True)
                     for agenda_item in html.xpath('//div[@class="articleBox"]'
                                                   '//tr'))
     agenda_items = filter(None, map(_extract_id_and_title,
-                                    itertools.repeat(url), agenda_items))
+                                    it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
-    text = clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
-
-    plenary_sitting = records.PlenarySitting.from_template(
+    return records.PlenarySitting(
         {'_sources': [url],
-         'agenda': {'cap1': tuple(i for i, _ in agenda_items.part_a),
-                    'cap2': (),
-                    'cap4': tuple(i for i, _ in agenda_items.part_d)},
+         'agenda': {'cap1': [i for i, _ in agenda_items.part_a],
+                    'cap2': [],
+                    'cap4': [i for i, _ in agenda_items.part_d]},
          'date': parse_long_date(clean_spaces(html.xpath('string(//h1)')),
                                  plenary=True),
          'links': [{'type': 'agenda', 'url': url}],
          'parliamentary_period': extract_parliamentary_period(url, text),
          'session': extract_session(url, text),
-         'sitting': extract_sitting(url, text)})
-    try:
-        plenary_sitting.merge() if plenary_sitting.exists else \
-            plenary_sitting.insert()
-    except records.InsertError as e:
-        logger.error(e)
-
-    bills_and_regs = dict(agenda_items.bills_and_regs)
-    return zip(itertools.repeat(url),
-               bills_and_regs.keys(), bills_and_regs.values())
+         'sitting': extract_sitting(url, text)}), \
+        it.starmap(lambda id_, title: records.Bill({'_sources': [url],
+                                                    'identifier': id_,
+                                                    'title': title}),
+                   agenda_items.bills_and_regs)
 
 
 RE_PAGE_NO = re.compile(r'^ +(?:\d+|\w)\n')
@@ -240,52 +238,34 @@ def _parse_pdf_agenda(url, text):
                '13-0312015- agenda ΤΟΠΟΘΕΤΗΣΕΙΣ doc.pdf'):
         # `TableParser` chokes on its mixed two- and three-col layout
         logger.warning('Skipping {!r} in `_parse_pdf_agenda`'.format(url))
-        return ()
+        return
 
     # Split the text at page breaks 'cause the table shifts from page to page
     pages = text.split('\x0c')
+    # Get rid of the page numbers 'cause they might intersect items in the list
+    pages = tuple(RE_PAGE_NO.sub('', page) for page in pages if page)
 
-    # Getting rid of the page numbers 'cause they might intersect items in the
-    # list
-    pages_ = (RE_PAGE_NO.sub('', page) for page in pages)
-    rows_ = itertools.chain.from_iterable(TableParser(page, 2).rows
-                                          for page in pages_)
+    rows_ = it.chain.from_iterable(TableParser(page).rows for page in pages)
     # Group rows into tuples, using the leftmost cell as a key, which oughta
     # either contain a list number or be left blank
     agenda_items = (' '.join(i[-1] for i in v)
-                    for _, v in itertools.groupby(rows_,
-                                                  key=_group_items_of_pdf()))
+                    for _, v in it.groupby(rows_, key=_group_items_of_pdf()))
     agenda_items = filter(None, map(_extract_id_and_title,
-                                    itertools.repeat(url), agenda_items))
+                                    it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
-    plenary_sitting = records.PlenarySitting.from_template(
+    return records.PlenarySitting(
         {'_sources': [url],
-         'agenda': {'cap1': tuple(i for i, _ in agenda_items.part_a),
-                    'cap2': (),
-                    'cap4': tuple(i for i, _ in agenda_items.part_d)},
+         'agenda': {'cap1': [i for i, _ in agenda_items.part_a],
+                    'cap2': [],
+                    'cap4': [i for i, _ in agenda_items.part_d]},
          'date': parse_long_date(clean_spaces(pages[0], medial_newlines=True),
                                  plenary=True),
          'links': [{'type': 'agenda', 'url': url}],
          'parliamentary_period': extract_parliamentary_period(url, text),
          'session': extract_session(url, text),
-         'sitting': extract_sitting(url, text)})
-    try:
-        plenary_sitting.merge() if plenary_sitting.exists else \
-            plenary_sitting.insert()
-    except records.InsertError as e:
-        logger.error(e)
-
-    bills_and_regs = dict(agenda_items.bills_and_regs)
-    return zip(itertools.repeat(url),
-               bills_and_regs.keys(), bills_and_regs.values())
-
-
-def _parse_agenda_bill(url, id_, title):
-    bill = records.Bill.from_template(
-        {'_sources': [url], 'identifier': id_, 'title': title})
-    if not bill.exists:
-        try:
-            bill.insert()
-        except records.InsertError as e:
-            logger.error(e)
+         'sitting': extract_sitting(url, text)}), \
+        it.starmap(lambda id_, title: records.Bill({'_sources': [url],
+                                                    'identifier': id_,
+                                                    'title': title}),
+                   agenda_items.bills_and_regs)

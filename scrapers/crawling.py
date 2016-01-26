@@ -5,14 +5,13 @@ import asyncio
 from collections import namedtuple
 import functools
 
-import aiohttp
+from aiohttp import ClientSession, TCPConnector
 import gridfs
 import magic
 from pymongo import MongoClient
 
-from scrapers import config
-from scrapers.text_utils import (doc_to_text, docx_to_json, html_to_lxml,
-                                 pdf_to_text)
+from . import config
+from .text_utils import doc_to_text, docx_to_json, html_to_lxml, pdf_to_text
 
 _CACHE = MongoClient()[config.CACHE_DB_NAME]
 _CACHE = namedtuple('_CACHE', 'file, text')(gridfs.GridFS(_CACHE),
@@ -23,22 +22,19 @@ class Crawler:
     """An async request pool and a rudimentary persisent cache."""
 
     def __init__(self, debug=False, max_reqs=15):
-        self._debug = debug
-        self._max_reqs = max_reqs
-
-    def __call__(self, task):
-        """Set off the crawler."""
         self._loop = asyncio.get_event_loop()
-        self._loop.set_debug(enabled=self._debug)
+        self._loop.set_debug(enabled=debug)
 
         # Limit concurrent requests to `max_reqs` to avoid flooding the
         # server.  `aiohttp.BaseConnector` has also got a `limit` option,
         # but that limits the number of open _sockets_
-        self._semaphore = asyncio.Semaphore(self._max_reqs)
+        self._semaphore = asyncio.Semaphore(max_reqs)
 
-        with aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(use_dns_cache=True),
-                loop=self._loop) as self._session:
+    def __call__(self, task):
+        """Set off the crawler."""
+        with ClientSession(connector=TCPConnector(use_dns_cache=True),
+                           loop=self._loop) \
+                as self._session:
             output = self._loop.run_until_complete(task(self)())
         task.after(output)
 
@@ -52,11 +48,10 @@ class Crawler:
         return functools.partial(self._loop.run_in_executor, None, func)
 
     async def gather(self, tasks):
-        """Execute the supplied sub-tasks, aggregating ther return values."""
+        """Execute the supplied sub-tasks, aggregating their return values."""
         return await asyncio.gather(*tasks, loop=self._loop)
 
-    async def get_text(self, url,
-                       form_data=None, request_method='get'):
+    async def get_text(self, url, *, form_data=None, request_method='get'):
         """Retrieve the decoded content of `url`."""
         exists = _CACHE.text.find_one(dict(url=url,
                                            form_data=form_data,
@@ -75,14 +70,12 @@ class Crawler:
                                         text=text))
             return text
 
-    async def get_html(self, url,
-                       clean=False, **kwargs):
+    async def get_html(self, url, *, clean=False, **kwargs):
         """Retrieve the lxml'ed text content of `url`."""
         text = await self.get_text(url, **kwargs)
         return await self.exec_blocking(html_to_lxml)(url, text, clean)
 
-    async def get_payload(self, url,
-                          decode=False):
+    async def get_payload(self, url, *, decode=False):
         """Retrieve the encoded content of `url`."""
         if decode is True:
             return await self._decode_payload(url, await self.get_payload(url))
@@ -128,7 +121,6 @@ class Task:
     def __init__(self, crawler):
         self.crawler = self.c = crawler
 
-    @staticmethod
     def after(output):
         """Overload to handle the output of the `Task`."""
         raise NotImplementedError

@@ -1,22 +1,22 @@
 
 from collections import namedtuple
 from datetime import date
-import itertools
+import itertools as it
 import json
 import logging
 import re
 
 import pandocfilters
 
-from scrapers.crawling import Task
-from scrapers.misc_utils import starfilter
-from scrapers import records
-from scrapers.tasks.plenary_agendas import \
-    RE_ID, RE_PAGE_NO, RE_TITLE_OTHER, \
-    AgendaItems, extract_parliamentary_period, extract_session
-from scrapers.text_utils import \
-    apply_subs, CanonicaliseName, clean_spaces, date2dato, pandoc_json_to, \
-    parse_long_date, TableParser
+from .. import records
+from ..crawling import Task
+from ..misc_utils import starfilter
+from ..tasks.plenary_agendas import \
+    (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
+     AgendaItems, extract_parliamentary_period, extract_session)
+from ..text_utils import \
+    (apply_subs, CanonicaliseName, clean_spaces, date2dato, pandoc_json_to,
+     parse_long_date, TableParser)
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class PlenaryTranscripts(Task):
         transcript_urls = \
             await self.c.gather({self.process_transcript_listing(url)
                                  for url in listing_urls})
-        transcript_urls = itertools.chain.from_iterable(transcript_urls)
+        transcript_urls = it.chain.from_iterable(transcript_urls)
         return await self.c.gather({self.process_transcript(url)
                                     for url in transcript_urls})
 
@@ -51,7 +51,6 @@ class PlenaryTranscripts(Task):
         func, content = await self.c.get_payload(url, decode=True)
         return url, func, content
 
-    @staticmethod
     def after(output):
         for transcript in output:
             _parse_transcript(*transcript)
@@ -113,10 +112,10 @@ def _extract_attendees(url, text, heading, date):
 
     attendees = set(filter(None, (_extract_attendee_name(url, a)
                                   for t in attendee_table
-                                  for a in TableParser(t, columns=2).values)))
+                                  for a in TableParser(t).values)))
     # The President's not listed among the attendees
-    attendees = attendees | _select_president(date) if 'ΠΡΟΕΔΡΟΣ:' in heading \
-        else attendees
+    if 'ΠΡΟΕΔΡΟΣ:' in heading:
+        attendees = attendees | _select_president(date)
     attendees = sorted(attendees)
     return attendees
 
@@ -190,12 +189,12 @@ def _extract_cap2(url, text):
     item_table = item_table.replace('|', ' ').split('\x0c')
     item_table = (RE_PAGE_NO.sub('', page) for page in item_table)
 
-    items = itertools.chain.from_iterable(TableParser(t, columns=4).rows
-                                          for t in item_table)
+    items = it.chain.from_iterable(TableParser(t, columns=4).rows
+                                   for t in item_table)
     # ((<title>, <sponsor>, <committee>), ...)
     items = (tuple(clean_spaces(' '.join(x), medial_newlines=True)
-                   for x in itertools.islice(zip(*v), 1, None))
-             for _, v in itertools.groupby(items, key=_item_groupper()))
+                   for x in it.islice(zip(*v), 1, None))
+             for _, v in it.groupby(items, key=_item_groupper()))
     items = (_extract_cap2_item(url, item) for item in items)
     # (Bill(<number>, <title>, <sponsor>, <committee>), ...)
     items = tuple(filter(None, items))
@@ -213,7 +212,7 @@ pandoc_ListNumberMarker = object()
 RE_LIST_NUMBER = re.compile(r'\d{1,2}\.$')
 
 
-class _Pandoc_Transforms:
+class _PandocTransforms:
 
     AlignDefault = lambda _: None
     OrderedList = lambda _: [pandoc_ListNumberMarker]
@@ -227,10 +226,9 @@ class _Pandoc_Transforms:
 
 
 def _stringify_pandoc_dicts(key, value, format_, meta):
-    # Stringify all the `dict`s
-    return_value = getattr(_Pandoc_Transforms, key)(value)
-    if isinstance(return_value, list) and all(isinstance(i, str)
-                                              for i in return_value):
+    return_value = getattr(_PandocTransforms, key)(value)
+    if isinstance(return_value, list) and \
+            all(isinstance(i, str) for i in return_value):
         return_value = [''.join(return_value)]
     return return_value
 
@@ -247,11 +245,10 @@ def _extract_pandoc_items(url, list_):
     for x in list_:
         if not x:
             continue
-        if isinstance(x[0], list) and x[0]:
+        if isinstance(x[0], list):
             if x[0] == [pandoc_ListNumberMarker]:
                 *title, number = x[1]
-                number, title, sponsors, committees = \
-                    map(' '.join, ([number], title, *x[2:]))
+                title, sponsors, committees = map(' '.join, (title, *x[2:]))
                 yield _Cap2Item(RE_ID.search(number).group(1),
                                 RE_TITLE_OTHER.sub('', title).rstrip('. '),
                                 sponsors, committees)
@@ -292,9 +289,9 @@ def _parse_transcript(url, func, content):
     else:
         cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
 
-    plenary_sitting = records.PlenarySitting.from_template(
+    plenary_sitting = records.PlenarySitting(
         {'_sources': [url],
-         'agenda': {'cap1': (), 'cap2': cap2, 'cap4': ()},
+         'agenda': {'cap1': [], 'cap2': cap2, 'cap4': []},
          'attendees': _extract_attendees(url, text, heading, date),
          'date': date,
          'links': [{'type': 'transcript', 'url': url}],
@@ -302,13 +299,12 @@ def _parse_transcript(url, func, content):
          'session': extract_session(url, heading),
          'sitting': _extract_sitting(url, heading)})
     try:
-        plenary_sitting.merge() if plenary_sitting.exists else \
-            plenary_sitting.insert()
+        plenary_sitting.insert(merge=plenary_sitting.exists)
     except records.InsertError as e:
         logger.error(e)
 
     for bill_ in bills_and_regs:
-        bill = records.Bill.from_template(
+        bill = records.Bill(
             {'_sources': [url],
              'identifier': bill_.number,
              'title': bill_.title,
@@ -317,6 +313,6 @@ def _parse_transcript(url, func, content):
                           'sponsors': bill_.sponsors,
                           'committees_referred_to': bill_.committees}]})
         try:
-            bill.merge() if bill.exists else bill.insert()
+            bill.insert(merge=bill.exists)
         except records.InsertError as e:
             logger.error(e)
