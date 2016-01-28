@@ -87,30 +87,31 @@ def run(args):
 
 @_register
 def dump(args):
-    """Usage: scrapers dump [-h] <collection> [<at_path>]
+    """Usage: scrapers dump [-h] [--location=<location>] [<collections> ...]
 
-    Dump a <collection> (table) <at_path>, defaulting to './data-new'.
+    Dump a <collection> (table) at <location>, defaulting to './data-new'.
 
     Options:
-        -h --help       Show this screen
+        --location=<location>   Path on disk where to gently deposit the data
+        -h --help               Show this screen
     """
-    def _dump(collection, path):
+    def _dump(collection, location):
         collection = db[collection]
         if collection.count() == 0:
             raise docopt.DocoptExit(
                 'Collection {!r} is empty'.format(collection.full_name))
 
-        head = Path(path or config.EXPORT_PATH)/collection.name
+        head = Path(location or config.EXPORT_PATH)/collection.name
         if not head.exists():
             head.mkdir(parents=True)
-
         for document in collection.find():
             try:
                 io.YamlManager.dump_record(document, str(head))
             except io.DumpError as e:
                 logger.error(e)
 
-    _dump(args['<collection>'], args['<at_path>'])
+    for collection in args['<collections>']:
+        _dump(collection, args['--location'])
 
 
 @_register
