@@ -5,7 +5,8 @@ import itertools as it
 import logging
 import re
 
-from . import _models as models
+from ._models import \
+    Bill, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting, InsertError
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date, TableParser,
                           ungarble_qh)
@@ -55,17 +56,19 @@ class PlenaryAgendas(Task):
             return _parse_agenda, (url, html)
 
     def after(output):
-        for plenary_sitting, bills in \
+        for url, plenary_sitting, bills in \
                 filter(None, (fn(url, c) for fn, (url, c) in output)):
             try:
                 plenary_sitting.insert(merge=plenary_sitting.exists)
-            except models.InsertError as e:
+            except InsertError as e:
                 logger.error(e)
 
-            for bill in bills:
+            for id_, title in bills:
+                bill = Bill(_sources=[url], identifier=id_, title=title,
+                            other_titles=[title])
                 try:
                     bill.insert(merge=bill.exists)
-                except models.InsertError as e:
+                except InsertError as e:
                     logger.error(e)
 
 
@@ -104,7 +107,7 @@ class AgendaItems:
         except KeyError:
             return
 
-    _AgendaItems = namedtuple('AgendaItems', 'part_a part_d bills_and_regs')
+    _AgendaItems = namedtuple('AgendaItems', 'cap1 cap4 bills_and_regs')
 
     def __new__(cls, url, agenda_items_):
         agenda_items = cls._AgendaItemDict(tuple)
@@ -206,25 +209,22 @@ def _parse_agenda(url, html):
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
-    return models.PlenarySitting(
-        {'_sources': [url],
-         'agenda': {'cap1': [i for i, _ in agenda_items.part_a],
-                    'cap2': [],
-                    'cap4': [i for i, _ in agenda_items.part_d]},
-         'date': parse_long_date(clean_spaces(html.xpath('string(//h1)')),
+    return (
+        url,
+        PlenarySitting(
+            _sources=[url],
+            agenda=PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
+                                 cap4=[i for i, _ in agenda_items.cap4]),
+            date=parse_long_date(clean_spaces(html.xpath('string(//h1)')),
                                  plenary=True),
-         'links': [{'type': 'agenda', 'url': url}],
-         'parliamentary_period': extract_parliamentary_period(url, text),
-         'session': extract_session(url, text),
-         'sitting': extract_sitting(url, text)}), \
-        it.starmap(lambda id_, title: models.Bill({'_sources': [url],
-                                                   'identifier': id_,
-                                                   'title': title,
-                                                   'other_titles': [title]}),
-                   agenda_items.bills_and_regs)
+            links=[PlenaryAgendaLink(type='agenda', url=url)],
+            parliamentary_period=extract_parliamentary_period(url, text),
+            session=extract_session(url, text),
+            sitting=extract_sitting(url, text)),
+        agenda_items.bills_and_regs)
 
 
-RE_PAGE_NO = re.compile(r'^ +(?:\d+|\w)\n')
+RE_PAGE_NO = re.compile(r'^ +(?:\d+|\w)$', re.MULTILINE)
 
 
 def _group_items_of_pdf():
@@ -241,7 +241,6 @@ def _group_items_of_pdf():
     return inner
 
 
-
 def _clean_title_text(text):
     return ft.reduce(lambda s, j: ''.join((s[:j.start()], ' '*len(j.group(1)),
                                            s[j.end():])),
@@ -255,11 +254,12 @@ def _parse_pdf_agenda(url, text):
         logger.warning('Skipping {!r} in `_parse_pdf_agenda`'.format(url))
         return
 
-    # Split the text at page breaks 'cause the table shifts from page to page
-    pages = _clean_title_text(text).split('\x0c')
-    # And get rid of the page numbers 'cause they might intersect items in
+    # Get rid of the page numbers 'cause they might intersect items in
     # the list
-    pages = tuple(RE_PAGE_NO.sub('', page) for page in pages if page)
+    pages = RE_PAGE_NO.sub('', _clean_title_text(text))
+    # And split the text at page breaks 'cause the table shifts from page to
+    # page
+    pages = tuple(filter(None, pages.split('\x0c')))
 
     rows_ = it.chain.from_iterable(TableParser(page).rows for page in pages)
     # Group rows into tuples, using the leftmost cell as a key, which oughta
@@ -270,19 +270,16 @@ def _parse_pdf_agenda(url, text):
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
 
-    return models.PlenarySitting(
-        {'_sources': [url],
-         'agenda': {'cap1': [i for i, _ in agenda_items.part_a],
-                    'cap2': [],
-                    'cap4': [i for i, _ in agenda_items.part_d]},
-         'date': parse_long_date(clean_spaces(pages[0], medial_newlines=True),
+    return (
+        url,
+        PlenarySitting(
+            _sources=[url],
+            agenda=PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
+                                 cap4=[i for i, _ in agenda_items.cap4]),
+            date=parse_long_date(clean_spaces(pages[0], medial_newlines=True),
                                  plenary=True),
-         'links': [{'type': 'agenda', 'url': url}],
-         'parliamentary_period': extract_parliamentary_period(url, text),
-         'session': extract_session(url, text),
-         'sitting': extract_sitting(url, text)}), \
-        it.starmap(lambda id_, title: models.Bill({'_sources': [url],
-                                                   'identifier': id_,
-                                                   'title': title,
-                                                   'other_titles': [title]}),
-                   agenda_items.bills_and_regs)
+            links=[PlenaryAgendaLink(type='agenda', url=url)],
+            parliamentary_period=extract_parliamentary_period(url, text),
+            session=extract_session(url, text),
+            sitting=extract_sitting(url, text)),
+        agenda_items.bills_and_regs)

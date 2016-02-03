@@ -18,20 +18,26 @@ class InsertError(Exception):
 def _compact(self):
     """Filter out boolean `False` values, returning a copy of the `BaseRecord`.
 
-    >>> _compact(BaseRecord({'a': {'b': {'c': 1}}, 'd': ''},
-    ...                     is_raw=True)).data == {'a': {'b': {'c': 1}}}
+    >>> (_compact(BaseRecord(_raw_data={'a': {'b': {'c': 1}}, 'd': ''}))
+    ...  .data == {'a': {'b': {'c': 1}}})
     True
-    >>> _compact(_unwrap(BaseRecord({'a': {'b': {'c': 1}}, 'd': {'e': ''}},
-    ...                             is_raw=True))).data == {'a.b.c': 1}
+    >>> (_compact(_unwrap(BaseRecord(_raw_data={'a': {'b': {'c': 1}},
+    ...                                         'd': {'e': ''}})))
+    ...  .data == {'a.b.c': 1})
     True
     """
     return self.__class__(
-        self.data.__class__(starfilter(lambda _, v: v, self.data.items())),
-        is_raw=True)
+        _raw_data=self.data.__class__(starfilter(lambda _, v: v,
+                                                 self.data.items())))
 
 
-def _sort(self):
-    """Traverse `self.data` to sort it and all sub-dicts alphabetically."""
+def _sort(data):
+    """Traverse `data` to sort it and all sub-dicts alphabetically.
+
+    >>> _sort({'c': 1, 'a': 4, 'b': [{'β': 2, 'α': 3}]})  # doctest: +NORMALIZE_WHITESPACE
+    OrderedDict([('a', 4), ('b', [OrderedDict([('α', 3), ('β', 2)])]),
+                 ('c', 1)])
+    """
     def sort(value):
         if isinstance(value, dict):
             return OrderedDict(it.starmap(lambda k, v: (k, sort(v)),
@@ -40,14 +46,14 @@ def _sort(self):
             return list(map(sort, value))
         return value
 
-    return self.__class__(OrderedDict(sort(self.data)), is_raw=True)
+    return sort(data)
 
 
 def _unwrap(self):
-    """Flatten the `BaseRecord` recursively, returning a copy of it.
+    """Flatten a `BaseRecord` recursively, returning a copy of it.
 
-    >>> (_unwrap(BaseRecord({'a': {'b': {'c': [1, 2], 'd': 3}}, 'e': {'f': ''}},
-    ...                    is_raw=True))
+    >>> (_unwrap(BaseRecord(_raw_data={'a': {'b': {'c': [1, 2], 'd': 3}},
+    ...                                'e': {'f': ''}}))
     ...  .data == {'a.b.c': [1, 2], 'a.b.d': 3, 'e.f': ''})
     True
     """
@@ -58,66 +64,291 @@ def _unwrap(self):
         else:
             yield pk, value
 
-    return self.__class__(self.data.__class__(rekey(self.data)),
-                          is_raw=True)
+    return self.__class__(_raw_data=self.data.__class__(rekey(self.data)))
 
 
-class BaseRecord:
-    """A base class for our records."""
+class _prepare_record(type):
 
-    def __init__(self, data, is_raw=False):
-        if hasattr(self, 'collection'):
-            self.collection = db[self.collection]
-        self._value_in_db = None
+    def __new__(cls, name, bases, cls_dict):
+        cls = super().__new__(cls, name, bases, cls_dict)
+        cls.template = _sort(getattr(cls, 'template', {}))
+        cls.properties = set(cls.template)
+        cls.required_properties = sorted(getattr(cls, 'required_properties',
+                                                 ()))
+        return cls
 
-        if is_raw is True:
-            self.data = deepcopy(data)
+
+class BaseRecord(metaclass=_prepare_record):
+    """A base class for our records.
+
+    Both class attributes, `template` and `required_properties`, are optional.
+    The `template` is the default structure of the record.
+    Initialising `BaseRecord` with properties not found in the `template`'s
+    keys will result in a `ValueError`.  Initialising `BaseRecord` without
+    any of the `required_properties` (or with any of them being falsy)
+    will also result in an error.
+
+    >>> class Base(BaseRecord):
+    ...     template = {'a': None, 'b': None, 'c': None}
+    ...     required_properties = {'a', 'b'}
+
+    >>> Base(a=1, b=2)
+    <Base: OrderedDict([('a', 1), ('b', 2), ('c', None)])>
+    >>> Base()   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    Traceback (most recent call last):
+      ...
+    ValueError: 'a', 'b' are required properties in
+    <Base: OrderedDict([('a', None), ('b', None), ('c', None)])>
+    >>> Base(d=4, e=5)    # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    Traceback (most recent call last):
+      ...
+    ValueError: 'd', 'e' are extraneous in <Base: OrderedDict(...)>
+    """
+
+    def __init__(self, *, _raw_data={}, **kwargs):
+        if _raw_data:
+            self.data = deepcopy(_raw_data)
             return
         self.data = deepcopy(self.template)
-        self.data.update(data)
-        for update in self._on_init_transforms():
-            self.data.update(update)
-        if not all(map(self.data.get, it.chain(self.required_properties,
-                                               ('_filename', '_sources')
-                                               ))):
+        self.data.update(kwargs)
+        # In the interest of getting things done within a reasonable time
+        # frame, we're punting on (very) light validation.  Notably,
+        # there's no type checking.  More thorough tests are found in
+        # the data repo
+        extraneous_properties = self.data.keys() - self.properties
+        if extraneous_properties:
+            raise ValueError(', '.join(map(repr,
+                                           sorted(extraneous_properties))) +
+                             ' are extraneous in ' + repr(self))
+        if self.required_properties and not all(map(self.data.get,
+                                                    self.required_properties)):
             raise ValueError(', '.join(map(repr, self.required_properties)) +
-                             ", '_filename' and '_sources' are required in " +
-                             repr(self))
+                             ' are required properties in ' + repr(self))
 
     def __repr__(self):
         return '<{}: {!r}>'.format(self.__class__.__name__, self.data)
 
-    def _on_init_transforms(self):
-        raise NotImplementedError
 
-    def _prepare_inserts(self):
-        raise NotImplementedError
+class _prepare_insertable_record(_prepare_record):
+
+    class _exceptionally_erroneous_collection:
+
+        def __init__(self, e):
+            self.e = e
+
+        def __get__(self, instance, owner):
+            raise self.e
+
+    def __new__(cls, name, bases, cls_dict):
+        cls_dict['template'] = cls_dict.get('template', {})
+        cls_dict['template']['_id'] = None
+        cls = super().__new__(cls, name, bases, cls_dict)
+        try:
+            cls.collection = db[cls.collection]
+        except Exception as e:
+            cls.collection = cls._exceptionally_erroneous_collection(e)
+        return cls
+
+
+class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
+    """A record that can be inserted into the database.
+
+    To interface with the database, `InsertableRecord`s must define a
+    `collection` name.
+
+    This is where we set up the testing environment.
+    `doctest` makes a shallow copy of `globals()`, but we wanna redefine
+    `db` globally to be picked up by `_prepare_insertable_record`.
+    Fixtures are only available to `rst` doctests, so we've got to resort
+    to whatever this is.  (We should really, really be using `unittest`s.)
+
+        >>> from uuid import uuid4
+        >>> from . import get_database, records
+        >>> test_db_name = uuid4().hex
+        >>> records.db = get_database(test_db_name)
+        >>> records.db.name == db.name
+        False
+
+    Test basic operation.
+
+        >>> class Insertable(records.InsertableRecord):
+        ...     collection = 'test'
+        ...     template = {'some_field': 'some_data'} \
+
+        ...     def generate__id(self):
+        ...         return 'insertable_test' \
+
+        ...     def generate_inserts(self, merge):
+        ...         data = yield
+        ...         yield {'$set': data}
+
+        >>> foo = Insertable()
+        >>> foo.insert()
+        OrderedDict([('_id', 'insertable_test'), ('some_field', 'some_data')])
+        >>> foo.exists
+        True
+        >>> foo.data['some_field'] = 'some_other_data'
+        >>> foo.insert()     # doctest: +NORMALIZE_WHITESPACE
+        OrderedDict([('_id', 'insertable_test'),
+                     ('some_field', 'some_other_data')])
+        >>> foo.collection.count()
+        1
+        >>> foo.delete()     # doctest: +NORMALIZE_WHITESPACE
+        OrderedDict([('_id', 'insertable_test'),
+                     ('some_field', 'some_other_data')])
+        >>> foo.exists
+        False
+        >>> del foo.data['_id']
+        >>> foo.insert()   # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+          ...
+        ValueError: No `_id` provided in <Insertable: OrderedDict([('some_field', 'some_other_data')])>
+
+    Test that, absent of an existing document in the database,
+    `insert(merge=True)` will raise `InsertError`.
+
+        >>> bar = Insertable()
+        >>> bar.insert(merge=True)    # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+          ...
+        scrapers.records.InsertError: Unable to insert or merge
+        <Insertable: OrderedDict([('_id', 'insertable_test'),
+                                  ('some_field', 'some_data')])>
+        with operation {'$set': OrderedDict([('some_field', 'some_data')])}
+
+    Test that undefined or ill-defined collections will throw an(y) error
+    upon both class and instance access.
+
+        >>> class Insertable(records.InsertableRecord):
+        ...     def generate__id(self):
+        ...         return 'insertable_test'
+
+        >>> Insertable.collection   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+          ...
+        AttributeError: type object 'InsertableRecord' has no attribute 'collection'
+        >>> baz = Insertable()
+        >>> baz.collection      # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        Traceback (most recent call last):
+          ...
+        AttributeError: type object 'InsertableRecord' has no attribute 'collection'
+
+        >>> class Insertable(records.InsertableRecord):
+        ...     collection = '' \
+
+        ...     def generate__id(self):
+        ...         return 'insertable_test'
+
+        >>> qux = Insertable()
+        >>> qux.collection      # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+          ...
+        pymongo.errors.InvalidName: collection names cannot be empty
+
+    Tear it all down.
+
+        >>> (records.db.command('dropDatabase') ==
+        ...  {'dropped': test_db_name, 'ok': 1.0})
+        True
+    """
+
+    def __init__(self, *, _raw_data={}, **kwargs):
+        super().__init__(_raw_data=_raw_data, **kwargs)
+        self.data['_id'] = self.generate__id()
+
+    @property
+    def _id(self):
+        """The record's primary key."""
+        return self.data.get('_id')
+
+    def delete(self):
+        """Delete the document from the database."""
+        return self.collection.find_one_and_delete(filter={'_id': self._id})
 
     @property
     def exists(self):
-        """See whether a `BaseRecord` with the same `_filename` already exists."""
-        filter_ = {'_filename': self.data['_filename']}
-        return bool(self.collection.find_one(filter=filter_))
+        """
+        Check to see whether a record with the same `self._id` exists in
+        the database.
+        """
+        return bool(self.collection.find_one(filter={'_id': self._id}))
+
+    def generate__id(self):
+        """Override to create an `_id`."""
+        raise NotImplementedError
+
+    def generate_inserts(self, merge):
+        """Override to construct database inserts.
+
+        `generate_inserts` is a coroutine called from within `self.insert`.
+        A boolean `merge` flag indicates whether the data has been squashed
+        in preparation for a merge operation.  Where `merge` is `False`,
+        self.data == (initial) data.
+
+        Refer to <https://docs.mongodb.org/manual/reference/operator/update/>
+        for the mongodb update syntax.  The simplest use case is:
+
+            def generate_inserts(self, merge):
+                data = yield            # Grab the data;
+                yield {'$set': data}    # and yield an update
+        """
+        raise NotImplementedError
 
     def insert(self, merge=False):
-        """Insert a `BaseRecord` in the database.
+        """Insert a record into the database.
 
-        `insert` returns the resulting document on success and
-        raises `InsertError` on failure.
+        `insert` returns the resultant document on success and raises
+        `InsertError` on failure.  If `merge` is `True`, the record will not
+        be inserted unless it already exists in the database.
         """
-        data = _sort(_unwrap(self)).data
-        if merge is True:
-            data = _compact(self.__class__(data, is_raw=True)).data
+        if not self._id:
+            raise ValueError('No `_id` provided in ' + repr(self))
+        new = not merge
+        if new:
+            self.delete()
+            data = deepcopy(self.data)
+        else:
+            data = _compact(_unwrap(self)).data
 
-        filter_ = {'_filename': self.data['_filename']}
-        if merge is not True:
-             self.collection.find_one_and_delete(filter=filter_)
+        inserts = self.generate_inserts(merge)
+        for _ in inserts:
+            data.pop('_id')
+            insert = inserts.send(data)
+            data = self.collection.find_one_and_update(
+                filter={'_id': self._id}, update=insert, upsert=new,
+                return_document=pymongo.ReturnDocument.AFTER)
+            if not data:
+                raise InsertError('Unable to insert or merge ' + repr(self) +
+                                  ' with operation ' + repr(insert))
+        self.data = data
+        return data
 
-        for insert in self._prepare_inserts(data, merge):
-            return_value = self._value_in_db = \
-                self.collection.find_one_and_update(
-                    filter=filter_, update=insert, upsert=not merge,
-                    return_document=pymongo.ReturnDocument.AFTER)
-            if not return_value:
-                raise InsertError('Unable to insert or merge ' + repr(self))
-        return return_value
+
+class _prepare_sub_record(_prepare_record):
+
+    def __new__(cls, name, bases, cls_dict):
+        cls = super().__new__(cls, name, bases, cls_dict)
+        cls._construct = type(cls.__name__, (BaseRecord,), dict(cls.__dict__))
+        return cls
+
+
+class SubRecord(metaclass=_prepare_sub_record):
+    """A record contained within another record.
+
+    A SubRecord returns its `self.data` on initialisation.
+
+    >>> class Sub(SubRecord):
+    ...     template = {'a': None, 'b': None, 'c': None}
+    ...     required_properties = {'a', 'b'}
+
+    >>> Sub(a=1, b=2)
+    OrderedDict([('a', 1), ('b', 2), ('c', None)])
+    >>> Sub()   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+    Traceback (most recent call last):
+      ...
+    ValueError: 'a', 'b' are required properties in
+    <Sub: OrderedDict([('a', None), ('b', None), ('c', None)])>
+    """
+
+    def __new__(cls, *, _raw_data={}, **kwargs):
+        return _sort(cls._construct(_raw_data=_raw_data, **kwargs)).data

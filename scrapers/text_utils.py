@@ -5,6 +5,7 @@ from collections import Counter
 import datetime
 import functools as ft
 import itertools as it
+from pathlib import Path
 import re
 import string
 import subprocess
@@ -13,6 +14,7 @@ from urllib.parse import urldefrag
 
 import icu
 import jellyfish
+import lxml.etree
 import lxml.html
 
 from . import db
@@ -179,33 +181,50 @@ class TableParser:
         return tuple(filter(None, values))
 
 
-def translit_slugify(s):
-    """Slugify a given string.
+class _Translit:
+    """A space to keep ICU transliterators.
 
-    Create filenames and URL slugs from Greek (or any) text by
-    converting Greek to alphanumeric ASCII; downcasing the input; and
-    replacing any number of consecutive spaces with a hyphen.
+    1. Create filenames and URL slugs from Greek (or any) text by
+       converting Greek to lowercase, alphanumeric ASCII and
+       replacing any number of consecutive spaces with a hyphen.
 
-    >>> translit_slugify('Ένα duo 3!')
-    'ena-duo-3'
+       >>> translit_slugify('Ένα duo 3!')
+       'ena-duo-3'
+
+    2. Remove diacritics from and downcase the input.
+
+       >>> translit_unaccent_lc('Ένα duo 3!')
+       'ενα duo 3!'
+
+    3. Transliterate a Greek name into Turkish.
+
+       >>> translit_el2tr('Ομήρου Γιαννάκης')
+       'Omíru Yiannákis'
     """
-    return icu.Transliterator.createFromRules('slugify', r"""
-        (.*) > &[^[:alnum:][:whitespace:]] any-remove(
-            &any-lower(
-                &Latin-ASCII(
-                    &el-Latin($1))));
-        :: Null;    # Backtrack
-        [:whitespace:]+ > \-;""").transliterate(s)
 
+    translit_slugify = icu.Transliterator.createFromRules(
+        'translit_slugify',
+        r'''(.*) > &[^[:alnum:][:whitespace:]] any-remove(
+                &any-lower(
+                    &Latin-ASCII(
+                        &el-Latin($1))));
+            :: Null;    # Backtrack
+            [:whitespace:]+ > \-;
+         ''').transliterate
 
-def translit_unaccent_lc(s):
-    """Remove diacritics and downcase the input.
+    translit_unaccent_lc = icu.Transliterator.createInstance(
+        'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate
 
-    >>> translit_unaccent_lc('Ένα duo 3!')
-    'ενα duo 3!'
-    """
-    return icu.Transliterator.createInstance(
-        'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate(s)
+    with (Path(__file__).parent/'translit'/'Greek-Turkish.xml').open('rb') \
+            as _file:
+        _xml = lxml.etree.fromstring(_file.read())
+    translit_el2tr = icu.Transliterator.createFromRules(
+        'translit_el2tr',
+        '\n'.join(e.text for e in _xml.xpath('//tRule'))).transliterate
+
+translit_slugify = _Translit.translit_slugify
+translit_unaccent_lc = _Translit.translit_unaccent_lc
+translit_el2tr = _Translit.translit_el2tr
 
 
 def ungarble_qh(text, _LATN2GREK=str.maketrans('’AB∆EZHIKMNOPTYXvo',
@@ -350,7 +369,7 @@ def parse_long_date(
         _EL_MONTHS=dict(zip(map(translit_unaccent_lc,
                                 icu.DateFormatSymbols(icu.Locale('el'))
                                    .getMonths()), range(1, 13)))
-         ):
+        ):
     """Convert a 'long' date in Greek into an ISO date.
 
     >>> parse_long_date('3 Μαΐου 2014')

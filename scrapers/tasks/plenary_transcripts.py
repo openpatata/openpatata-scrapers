@@ -8,7 +8,9 @@ import re
 
 import pandocfilters
 
-from . import _models as models
+from ._models import \
+    (Bill, BillActions, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting,
+     InsertError)
 from ..crawling import Task
 from ..misc_utils import starfilter
 from ..tasks.plenary_agendas import \
@@ -186,8 +188,7 @@ def _extract_cap2(url, text):
         logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
         return
 
-    item_table = item_table.replace('|', ' ').split('\x0c')
-    item_table = (RE_PAGE_NO.sub('', page) for page in item_table)
+    item_table = RE_PAGE_NO.sub('', item_table).replace('|', ' ').split('\x0c')
 
     items = it.chain.from_iterable(TableParser(t, columns=4).rows
                                    for t in item_table)
@@ -289,31 +290,34 @@ def _parse_transcript(url, func, content):
     else:
         cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
 
-    plenary_sitting = models.PlenarySitting(
-        {'_sources': [url],
-         'agenda': {'cap1': [], 'cap2': cap2, 'cap4': []},
-         'attendees': _extract_attendees(url, text, heading, date),
-         'date': date,
-         'links': [{'type': 'transcript', 'url': url}],
-         'parliamentary_period': extract_parliamentary_period(url, heading),
-         'session': extract_session(url, heading),
-         'sitting': _extract_sitting(url, heading)})
+    plenary_sitting = PlenarySitting(
+        _sources=[url],
+        agenda=PlenaryAgenda(cap2=cap2),
+        attendees=_extract_attendees(url, text, heading, date),
+        date=date,
+        links=[PlenaryAgendaLink(type='transcript', url=url)],
+        parliamentary_period=extract_parliamentary_period(url, heading),
+        session=extract_session(url, heading),
+        sitting=_extract_sitting(url, heading))
     try:
         plenary_sitting.insert(merge=plenary_sitting.exists)
-    except models.InsertError as e:
+    except InsertError as e:
         logger.error(e)
 
     for bill_ in bills_and_regs:
-        bill = models.Bill(
-            {'_sources': [url],
-             'actions': [{'action': 'submission',
-                          'at_plenary': plenary_sitting.data['_filename'],
-                          'sponsors': bill_.sponsors,
-                          'committees_referred_to': bill_.committees}],
-             'identifier': bill_.number,
-             'title': bill_.title,
-             'other_titles': [bill_.title],})
+        try:
+            actions = [BillActions.Submission(
+                at_plenary=plenary_sitting._id,
+                sponsors=bill_.sponsors,
+                committees_referred_to=bill_.committees)]
+        except ValueError:
+            # Discard likely malformed bills
+            logger.error('Unable to parse {!r} into a bill'.format(bill_))
+            continue
+
+        bill = Bill(_sources=[url], actions=actions, identifier=bill_.number,
+                    title=bill_.title, other_titles=[bill_.title])
         try:
             bill.insert(merge=bill.exists)
-        except models.InsertError as e:
+        except InsertError as e:
             logger.error(e)

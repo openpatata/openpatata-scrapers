@@ -49,7 +49,7 @@ def init(args):
         -h --help       Show this screen
     """
     def _init(import_path, dirs):
-        db.command('dropDatabase', 1)
+        db.command('dropDatabase')
 
         files = itertools.chain.from_iterable(map(
             lambda dir_: zip(Path(import_path or

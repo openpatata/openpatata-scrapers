@@ -34,8 +34,8 @@ class Questions(Task):
     async def process_question_listing(self, url):
         html = await self.c.get_html(url, clean=True)
         return (it.chain.from_iterable(await self.process_question_index(url)),
-                ((url, *question) for question in extract_questions(url, html))
-                )
+                ((url, *question)
+                 for question in extract_questions(url, html)))
 
     def after(output):
         for question in output:
@@ -52,17 +52,19 @@ def extract_questions(url, html):
     body = []       # [<Element>, ...]
     footer = []
 
+    counter = 0
     for e in it.chain(html.xpath('//tr//p'),
-                             (HtmlElement('Ερώτηση με αρ.'),)):    # Sentinel
+                      (HtmlElement('Ερώτηση με αρ.'),)):    # Sentinel
         e.text = clean_spaces(e.text_content())
         norm_text = apply_subs(ungarble_qh(e.text), SUBS)
         if norm_text.startswith('Ερώτηση με αρ.'):
             if heading is not None and body:
-                yield heading, body, footer
+                counter += 1
+                yield heading, body, footer, counter
             else:
                 logger.warning('Skipping question {} in {!r}'
-                               ''.format((getattr(heading, 'text', ''),) +
-                                         tuple(i.text for i in body), url))
+                               .format((getattr(heading, 'text', ''),) +
+                                       tuple(i.text for i in body), url))
 
             e.text = norm_text
             heading = e
@@ -95,37 +97,32 @@ RE_NAMES = re.compile(r'''({uc}{lc}+
                       re.VERBOSE)
 
 
-def _parse_question(url, heading, body, footer):
+def _parse_question(url, heading, body, footer, counter):
     try:
         match = RE_HEADING.match(heading.text).groupdict()
     except AttributeError:
-        logger.error('Unable to parse heading {!r}'
-                     ' in {!r}'.format(heading.text, url))
+        logger.error('Unable to parse heading {!r} in {!r}'
+                     .format(heading.text, url))
         return
 
     names = RE_NAMES.findall(RE_NAMES_PREPARE.sub('', heading.text))
-    names = (
-        CanonicaliseName.from_declined(name) or logger.warning(
-            'No match found for name {!r} in heading {!r}'
-            ' in {!r}'.format(name, heading.text, url)) for name in names)
+    names = (CanonicaliseName.from_declined(name) or logger.warning(
+        'No match found for name {!r} in heading {!r}'
+        ' in {!r}'.format(name, heading.text, url)) for name in names)
     names = list(filter(None, names))
 
-    answer_links = (
-        e.xpath('.//a/@href') or logger.info(
-            'Unable to extract URL of answer to question with number'
-            ' {!r} in {!r}'.format(match['id'], url)) for e in footer)
+    answer_links = (e.xpath('.//a/@href') or logger.info(
+        'Unable to extract URL of answer to question with number'
+        ' {!r} in {!r}'.format(match['id'], url)) for e in footer)
     answer_links = it.chain.from_iterable(filter(None, answer_links))
     answer_links = sorted(set(answer_links))
 
     question = models.Question(
-        {'_sources': [url],
-         'answers': answer_links,
-         'by': names,
-         'date': parse_long_date(match['date']),
-         'heading': heading.text.rstrip('.'),
-         'identifier': match['id'],
-         'text': '\n\n'.join(p.text for p in body).strip()})
-    try:
-        question.insert()
-    except models.InsertError as e:
-        logger.error(e)
+        _position_on_page=counter, _sources=[url],
+        answers=answer_links, by=names, date=parse_long_date(match['date']),
+        heading=heading.text.rstrip('.'), identifier=match['id'],
+        text='\n\n'.join(p.text for p in body).strip())
+    if question.exists:
+        logger.error(repr(question) + ' already exists; skipping')
+        return
+    question.insert()

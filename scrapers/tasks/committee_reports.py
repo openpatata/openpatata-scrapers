@@ -57,10 +57,10 @@ def _parse_committee_report(url, date, item):
         return
 
     committee_report = models.CommitteeReport(
-        {'_sources': [url],
-         'date_circulated': date,
-         'title': clean_spaces(item.text_content(), medial_newlines=True),
-         'url': link})
+        _sources=[url],
+        date_circulated=date,
+        title=clean_spaces(item.text_content(), medial_newlines=True),
+        url=link)
     try:
         committee_report.insert(merge=committee_report.exists)
     except models.InsertError as e:

@@ -2,112 +2,142 @@
 """Models for records used in tasks."""
 
 from pathlib import Path
-import re
 
-from ..records import BaseRecord, InsertError
+from ..records import InsertError, InsertableRecord, SubRecord
 
 
-class Bill(BaseRecord):
+class Bill(InsertableRecord):
 
     collection = 'bills'
-    template = {'actions': [],
+    template = {'_sources': [],
+                'actions': [],
                 'identifier': None,
                 'title': None,
                 'other_titles': []}
-    required_properties = ('identifier', 'title', 'other_titles')
+    required_properties = ('_sources', 'identifier', 'title', 'other_titles')
 
-    def _on_init_transforms(self):
-        return {'_filename': self.data['identifier']},
+    def generate__id(self):
+        return self.data['identifier']
 
-    def _prepare_inserts(self, data, merge):
+    def generate_inserts(self, merge):
+        data = yield
+        if not merge:
+            yield {'$set': data}
+            return
         yield {'$set': data,
                '$addToSet': {'_sources': {'$each': data.pop('_sources')},
                              'actions': {'$each': data.pop('actions', [])},
                              'other_titles': {'$each': data.pop('other_titles')
                                               }}}
-        other_titles = sorted(self._value_in_db['other_titles'],
+
+        data = yield
+        other_titles = sorted(data['other_titles'],
                               key=lambda v: tuple(reversed(v.rpartition(' '))))
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'actions': {'$each': [], '$sort': {'at_plenary': 1}}},
-               '$set': {'other_titles': other_titles}}
-        # <Pause to allow for the value of `self._value_in_db` to be updated>
-        yield {'$set': {'title': self._value_in_db['other_titles'][-1]}}
+               '$set': {'title': other_titles[-1],
+                        'other_titles': other_titles}}
 
 
-class CommitteeReport(BaseRecord):
+class BillActions:
+
+    class Submission(SubRecord):
+
+        template = {'action': 'submission',
+                    'at_plenary': None,
+                    'committees_referred_to': None,
+                    'sponsors': None}
+        required_properties = ('at_plenary', 'committees_referred_to',
+                               'sponsors')
+
+
+class CommitteeReport(InsertableRecord):
 
     collection = 'committee_reports'
-    template = {'attendees': [],
+    template = {'_sources': [],
+                'attendees': [],
                 'date_circulated': None,
                 'date_prepared': None,
                 'relates_to': [],
                 'text': None,
                 'title': None,
                 'url': None}
-    required_properties = ('title', 'url')
+    required_properties = ('_sources', 'title', 'url')
 
-    def _on_init_transforms(self):
-        return {'_filename': '_'.join((self.data['date_circulated'] or '_',
-                                       Path(self.data['url']).stem))},
+    def generate__id(self):
+        return '_'.join((self.data['date_circulated'] or '_',
+                         Path(self.data['url']).stem))
 
-    def _prepare_inserts(self, data, merge):
-        return {'$set': data},
+    def generate_inserts(self, merge):
+        data = yield
+        yield {'$set': data}
 
 
-class PlenarySitting(BaseRecord):
+class PlenaryAgenda(SubRecord):
+
+    template = {'cap1': [], 'cap2': [], 'cap4': []}
+
+
+class PlenaryAgendaLink(SubRecord):
+
+    template = {'url': None, 'type': None}
+    required_properties = ('url', 'type')
+
+
+class PlenarySitting(InsertableRecord):
 
     collection = 'plenary_sittings'
-    template = {'agenda': {'cap1': [], 'cap2': [], 'cap4': []},
+    template = {'_sources': [],
+                'agenda': {},
                 'attendees': [],
                 'date': None,
                 'links': [],
                 'parliamentary_period': None,
                 'session': None,
                 'sitting': None}
-    required_properties = ('date', 'parliamentary_period')
+    required_properties = ('_sources', 'date', 'parliamentary_period')
 
-    def _on_init_transforms(self):
-        data = self.data
-        return {'_filename': '_'.join(map(str, (data['date'],
-                                                data['parliamentary_period'],
-                                                data['session'],
-                                                data['sitting'])))},
+    def generate__id(self):
+        data = map(self.data.get, ('date', 'parliamentary_period', 'session',
+                                   'sitting'))
+        return '_'.join(map(str, data))
 
-    def _prepare_inserts(self, data, merge):
-        ins = {'$set': data,
-               '$addToSet': {'_sources': {'$each': data.pop('_sources')}}}
-        if merge:
-            cap1 = data.pop('agenda.cap1', None)
-            if cap1:
-                ins['$addToSet'].update({'agenda.cap1': {'$each': cap1}})
-            cap4 = data.pop('agenda.cap4', None)
-            if cap4:
-                ins['$addToSet'].update({'agenda.cap4': {'$each': cap4}})
-            links = data.pop('links', None)
-            if links:
-                ins['$addToSet'].update({'links': {'$each': links}})
-        return ins, {'$push': {'_sources': {'$each': [], '$sort': 1},
-                               'links': {'$each': [], '$sort': {'type': 1}}}}
+    def generate_inserts(self, merge):
+        data = yield
+        if not merge:
+            yield {'$set': data}
+            return
+        yield {'$set': data,
+               '$addToSet': {'_sources': {'$each': data.pop('_sources')},
+                             'agenda.cap1': {'$each': data.pop('agenda.cap1',
+                                                               [])},
+                             'agenda.cap4': {'$each': data.pop('agenda.cap4',
+                                                               [])},
+                             'links': {'$each': data.pop('links', [])}}}
+
+        _ = yield
+        yield {'$push': {'_sources': {'$each': [], '$sort': 1},
+                         'links': {'$each': [], '$sort': {'type': 1}}}}
 
 
-class Question(BaseRecord):
+class Question(InsertableRecord):
 
     collection = 'questions'
-    template = {'answers': [],
+    template = {'_position_on_page': None,
+                '_sources': [],
+                'answers': [],
                 'by': [],
                 'date': None,
                 'heading': None,
                 'identifier': None,
                 'text': None}
-    required_properties = ('date', 'heading', 'identifier', 'text')
+    required_properties = ('_position_on_page', '_sources', 'date', 'heading',
+                           'identifier', 'text')
 
-    def _on_init_transforms(self):
-        filename = self.data['identifier']
-        other = self.collection\
-            .count({'_filename': re.compile(r'{}(_\d+)?$'.format(filename))})
-        if other:
-            filename = '_'.join((filename, str(other + 1)))
-        return {'_filename': filename},
+    def generate__id(self):
+        return '{}_{}'.format(self.data['identifier'],
+                              self.data['_position_on_page'])
 
-    def _prepare_inserts(self, data, merge):
-        return {'$set': data},
+    def generate_inserts(self, merge):
+        data = yield
+        yield {'$set': data}

@@ -59,18 +59,17 @@ class YamlManager:
     def load_record(cls, path, filename):
         """Import a database record from disk."""
         doc = cls.load(path)
-        doc['_filename'] = filename
+        doc['_id'] = filename
         return doc
 
     @staticmethod
     def dump_record(doc, head):
         """Save a database record to disk."""
         try:
-            path = os.path.join(head, doc.pop('_filename')) + '.yaml'
-            del doc['_id']
+            path = os.path.join(head, doc.pop('_id')) + '.yaml'
         except KeyError:
-            raise DumpError('Unable to extract filename from record with'
-                            ' `_id` {!r}'.format(doc['_id'])) from None
+            raise DumpError('Unable to extract `_id` from'
+                            ' {!r}'.format(doc['_id'])) from None
         with open(path, 'w') as file:
             yaml.dump(doc, file,
                       Dumper=_YamlDumper,
