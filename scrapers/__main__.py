@@ -5,7 +5,7 @@ This package collects and stratifies some of what's made available on
 the Cypriot parliament's website.  For more information, please see the
 README.
 
-Usage: scrapers [-h] <command> [<args> ...]
+Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
     init            Populate the database
@@ -15,14 +15,15 @@ Commands:
 
 Options:
     -h --help       Show this screen
+    -v --verbose    Print error messages of all levels
 """
 
-import itertools
+import itertools as it
 import logging
 from pathlib import Path
 from textwrap import dedent
 
-import docopt
+from docopt import docopt, DocoptExit
 
 from . import config, db, io
 
@@ -40,7 +41,7 @@ def _register(fn):
 
 @_register
 def init(args):
-    """Usage: scrapers init [-h] [<from_path> [<import> ...]]
+    """Usage: scrapers init [<from_path> [<import> ...]]
 
     Populate the database <from_path>, defaulting to './data', and
     enclosing <import> directories.
@@ -51,10 +52,10 @@ def init(args):
     def _init(import_path, dirs):
         db.command('dropDatabase')
 
-        files = itertools.chain.from_iterable(map(
+        files = it.chain.from_iterable(map(
             lambda dir_: zip(Path(import_path or
                                   config.IMPORT_PATH, dir_).iterdir(),
-                             itertools.repeat(dir_)),
+                             it.repeat(dir_)),
             dirs or config.IMPORT_DIRS))
         for path, collection in files:
             db[collection].insert_one(io.YamlManager.load_record(str(path),
@@ -65,12 +66,12 @@ def init(args):
 
 @_register
 def run(args):
-    """Usage: scrapers run [-d|-h] <task>
+    """Usage: scrapers run [-d] <task>
 
     Run a specified scraper task.
 
     Options:
-        -d --debug      Print asyncio debugging messages to stderr
+        -d --debug      Print asyncio debugging messages to `stderr`
         -h --help       Show this screen
     """
     from scrapers import crawling
@@ -78,8 +79,8 @@ def run(args):
 
     def _run(task, debug):
         if task not in TASKS:
-            raise docopt.DocoptExit('Task must to be one of: {}'.format(
-                '; '.join(sorted(TASKS))))
+            raise DocoptExit('Available tasks are: ' +
+                             '; '.join(sorted(TASKS)))
         crawling.Crawler(debug=debug)(TASKS[task])
 
     _run(args['<task>'], args['--debug'])
@@ -87,7 +88,7 @@ def run(args):
 
 @_register
 def dump(args):
-    """Usage: scrapers dump [-h] [--location=<location>] [<collections> ...]
+    """Usage: scrapers dump [--location=<location>] [<collections> ...]
 
     Dump a <collection> (table) at <location>, defaulting to './data-new'.
 
@@ -98,8 +99,8 @@ def dump(args):
     def _dump(collection, location):
         collection = db[collection]
         if collection.count() == 0:
-            raise docopt.DocoptExit(
-                'Collection {!r} is empty'.format(collection.full_name))
+            raise DocoptExit('Collection {!r} is empty'
+                             .format(collection.full_name))
 
         head = Path(location or config.EXPORT_PATH)/collection.name
         if not head.exists():
@@ -115,8 +116,23 @@ def dump(args):
 
 
 @_register
+def export(args):
+    """Usage: scrapers export [--locale=<locale>]
+
+    Export the MP (person) collection to Popolo JSON.  This follows a similar
+    format to everypolitician's (<https://github.com/everypolitician>).
+
+    Options:
+        --locale=<locale>   Localise in <locale> [default: el]
+        -h --help           Show this screen
+    """
+    from .tasks._models import MP
+    print(MP.export_all_to_popolo(args['--locale']))
+
+
+@_register
 def clear_cache(_):
-    """Usage: scrapers clear_cache [-h]
+    """Usage: scrapers clear_cache
 
     Clear the crawler's cache.
 
@@ -128,16 +144,18 @@ def clear_cache(_):
 
 
 def main():
-    args = docopt.docopt(__doc__, options_first=True)
+    args = docopt(__doc__, options_first=True)
+    if args['--verbose']:
+        logging.basicConfig(level=logging.DEBUG)
     try:
         command = _register.__dict__[args['<command>']]
     except KeyError:
-        raise docopt.DocoptExit('Command must to be one of: {}'.format(
-            '; '.join(sorted(_register.__dict__))))
+        raise DocoptExit('Available commands are: ' +
+                         '; '.join(sorted(_register.__dict__)))
     else:
-        args = docopt.docopt(command.__doc__)
+        args = docopt(command.__doc__,
+                      argv=[args['<command>']] + args['<args>'])
         command(args)
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
     main()

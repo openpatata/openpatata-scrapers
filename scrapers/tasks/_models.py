@@ -1,6 +1,9 @@
 
 """Models for records used in tasks."""
 
+from collections import OrderedDict
+import itertools as it
+import json
 from pathlib import Path
 
 from ..records import InsertError, InsertableRecord, SubRecord
@@ -71,6 +74,68 @@ class CommitteeReport(InsertableRecord):
     def generate_inserts(self, merge):
         data = yield
         yield {'$set': data}
+
+
+class MP(InsertableRecord):
+
+    collection = 'mps'
+
+    @classmethod
+    def export_all_to_popolo(cls, locale):
+        areas = cls.collection.aggregate([
+            {'$unwind': '$tenures'},
+            {'$group': {'_id': 0,
+                        'areas': {'$addToSet': '$tenures.electoral_district'}}},
+            {'$project':
+                {'_id': 0,
+                 'areas': {'$map': {'input': '$areas', 'as': 'area',
+                                    'in': {'id': {'$concat': ['electoral_district/',
+                                                              {'$toLower': '$$area.en'}]},
+                                           'name': '$$area.'+locale}}}}}])
+        memberships = cls.collection.aggregate([
+            {'$unwind': '$tenures'},
+            {'$project':
+                {'_id': 0,
+                 'area_id': {'$concat': ['electoral_district/',
+                                         {'$toLower': '$tenures.electoral_district.en'}]},
+                 'end_date': '$tenures.end_date',
+                 'on_behalf_of_id': {'$concat': ['parliamentary_group/',
+                                                 '$tenures.parliamentary_group_id']},
+                 'organization': {'$const': {'name': 'Βουλή των Αντιπροσώπων'}},
+                 'person_id': {'$concat': ['politician/', '$_id']},
+                 'start_date': '$tenures.start_date'}
+             },
+            {'$group': {'_id': 0, 'memberships': {'$push': '$$ROOT'}}},
+            {'$project': {'_id': 0, 'memberships': '$memberships'}}])
+        organisations = \
+            cls.collection.database.parliamentary_groups.aggregate([
+                {'$project': {'_id': 0,
+                              'abbreviation': '$abbreviation.'+locale,
+                              'id': {'$concat': ['parliamentary_group/',
+                                                 '$_id']},
+                              'name': '$name.'+locale}},
+                {'$group': {'_id': 0, 'organizations': {'$push': '$$ROOT'}}},
+                {'$project': {'_id': 0, 'organizations': '$organizations'}}])
+        persons = cls.collection.aggregate([
+            {'$project':
+                {'_id': 0,
+                 'id': {'$concat': ['politician/', '$_id']},
+                 'birth_date': {'$ifNull': ['$birth_date', '']},
+                 'email': {'$ifNull': ['$email', '']},
+                 'gender': {'$ifNull': ['$gender', '']},
+                 'image': {'$ifNull': ['$mugshot', '']},
+                 'links': {'$ifNull': [{'$map': {'input': '$links', 'as': 'link',
+                                                 'in': {'note': '$$link.note.'+locale,
+                                                        'url': '$$link.url'}}}, []]},
+                 'name': '$name.'+locale}
+             },
+            {'$group': {'_id': 0, 'persons': {'$push': '$$ROOT'}}},
+            {'$project': {'_id': 0, 'persons': '$persons'}}])
+
+        doc = OrderedDict()
+        for i in it.chain(areas, memberships, organisations, persons):
+            doc.update(i)
+        return json.dumps(doc, ensure_ascii=False, indent=2)
 
 
 class PlenaryAgenda(SubRecord):
