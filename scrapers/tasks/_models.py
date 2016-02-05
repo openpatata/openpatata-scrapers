@@ -37,7 +37,8 @@ class Bill(InsertableRecord):
         other_titles = sorted(data['other_titles'],
                               key=lambda v: tuple(reversed(v.rpartition(' '))))
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
-                         'actions': {'$each': [], '$sort': {'at_plenary': 1}}},
+                         'actions': {'$each': [],
+                                     '$sort': {'at_plenary_id': 1}}},
                '$set': {'title': other_titles[-1],
                         'other_titles': other_titles}}
 
@@ -47,10 +48,10 @@ class BillActions:
     class Submission(SubRecord):
 
         template = {'action': 'submission',
-                    'at_plenary': None,
+                    'at_plenary_id': None,
                     'committees_referred_to': None,
                     'sponsors': None}
-        required_properties = ('at_plenary', 'committees_referred_to',
+        required_properties = ('at_plenary_id', 'committees_referred_to',
                                'sponsors')
 
 

@@ -307,7 +307,7 @@ def _parse_transcript(url, func, content):
     for bill_ in bills_and_regs:
         try:
             actions = [BillActions.Submission(
-                at_plenary=plenary_sitting._id,
+                at_plenary_id=plenary_sitting._id,
                 sponsors=bill_.sponsors,
                 committees_referred_to=bill_.committees)]
         except ValueError:
