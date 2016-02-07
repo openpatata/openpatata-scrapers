@@ -13,11 +13,9 @@ import tempfile
 from urllib.parse import urldefrag
 
 import icu
-import jellyfish
 import lxml.etree
 import lxml.html
 
-from . import db
 from .misc_utils import starfilter
 
 
@@ -235,106 +233,6 @@ def ungarble_qh(text, _LATN2GREK=str.maketrans('’AB∆EZHIKMNOPTYXvo',
     Greek lookalikes.
     """
     return text.translate(_LATN2GREK)
-
-
-class CanonicaliseName:
-
-    NAMES = it.chain(
-        db.mps.aggregate([{'$project': {'name': '$name.el',
-                                        'other_name': '$name.el'}}]),
-        db.mps.aggregate([{'$unwind': '$other_names'},
-                          {'$match': {'other_names.note': re.compile('el-Grek')
-                                      }},
-                          {'$project': {'name': '$name.el',
-                                        'other_name': '$other_names.name'}}]))
-    NAMES = {mp['other_name']: mp['name'] for mp in NAMES}
-
-    # {'lastname firstname': 'Lastname Firstname', ...}
-    NAMES_NORM = {translit_unaccent_lc(k): v for k, v in NAMES.items()}
-
-    # ((fore_1.sub, aft_1.sub), (fore_1.sub, aft_2.sub), ...,
-    #  (fore_2.sub, aft_1.sub), ...)
-    TRANSFORMS = ([(r'', ''), (r'$', 'ς'), (r'ου$', 'ος'), (r'ς$', '')],  # fore
-                  [(r'', ''), (r'$', 'ς'), (r'ου$', 'ος')])               # aft
-    TRANSFORMS = it.product(*([(re.compile(p), r) for p, r in v]
-                              for v in TRANSFORMS))
-    TRANSFORMS = tuple((ft.partial(fore[0].sub, fore[1]),
-                        ft.partial(aft[0].sub, aft[1]))
-                       for fore, aft in TRANSFORMS)
-
-    @staticmethod
-    def _prepare_declined(name):
-        """Clean up, normalise and tokenise the `name`."""
-        name = ''.join(c for c in name if not c.isdigit())
-        name = translit_unaccent_lc(name)
-        return re.findall(r'\w+', name)
-
-    @staticmethod
-    def _permute_declined(name, transforms):
-        r"""Apply all of the `transforms` to a `name`, returning a set.
-
-        >>> (CanonicaliseName._permute_declined(
-        ...      CanonicaliseName._prepare_declined('Γιαννάκη Ομήρου'),
-        ...      CanonicaliseName.TRANSFORMS) ==
-        ...  {'ομηρους γιαννακη', 'ομηρου γιαννακης', 'ομηρους γιαννακης',
-        ...   'ομηρου γιαννακη', 'ομηρος γιαννακη', 'ομηρος γιαννακης'})
-        True
-        """
-        first, *middle, last = name
-        names = ((fore(first), *(middle and (aft(middle[0]),)), aft(last))
-                 for fore, aft in transforms)
-        names = {' '.join(reversed(name)) for name in names}
-        return names
-
-    @classmethod
-    @ft.lru_cache(maxsize=None)
-    def from_declined(cls, name_):
-        """Pair a declined name with a canonical name in the database.
-
-        >>> CanonicaliseName.from_declined('Ρούλλας Μαυρονικόλα')
-        'Μαυρονικόλα Ρούλα'
-        >>> CanonicaliseName.from_declined('gibber ish') is None
-        True
-        >>> CanonicaliseName.from_declined('gibberish')  # doctest: +ELLIPSIS
-        Traceback (most recent call last):
-            ...
-        ValueError: Too few or too many tokens in 'gibberish'
-        >>> CanonicaliseName.from_declined('a b c d')    # doctest: +ELLIPSIS
-        Traceback (most recent call last):
-            ...
-        ValueError: Too few or too many tokens in 'a b c d'
-        """
-        name = cls._prepare_declined(name_)
-        if not 1 < len(name) <= 3:
-            raise ValueError('Too few or too many tokens in {!r}'.format(name_))
-
-        match = cls._permute_declined(name, cls.TRANSFORMS) & \
-            cls.NAMES_NORM.keys()
-        if match:
-            return cls.NAMES_NORM[match.pop()]
-
-    @classmethod
-    @ft.lru_cache(maxsize=None)
-    def from_garbled(cls, name):
-        """Pair a jumbled up MP name with a canonical name in the database.
-
-        >>> CanonicaliseName.from_garbled('Καπθαιηάο Αληξέαο')   # Jesus take the wheel
-        'Καυκαλιάς Αντρέας'
-        >>> CanonicaliseName.from_garbled('') is None
-        True
-        """
-        if not name:
-            return
-        try:
-            return cls.NAMES[name]
-        except KeyError:
-            try:
-                _, new_name = min((jellyfish.hamming_distance(name, v), v)
-                                  for v in cls.NAMES.values()
-                                  if len(v) == len(name))
-                return new_name
-            except ValueError:
-                return
 
 
 def parse_short_date(

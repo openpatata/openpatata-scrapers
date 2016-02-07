@@ -89,22 +89,24 @@ class AgendaItems:
             else:
                 return super().__getitem__(key)
 
-    ITEM_TYPES = {
-        '13.06': re.compile(r'.*'),   # Budget-related decision—maybe?
-        '23.01': re.compile(r'23\.01\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$'),   # Government bill
-        '23.02': re.compile(r'23\.02\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$'),   # Members' bill
-        '23.03': re.compile(r'23\.03\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$'),   # Draft regulations
-        '23.04': re.compile(r'.*'),   # Something or other to do with committees
-        '23.05': re.compile(r'.*'),   # Debate topic
-        '23.10': re.compile(r'.*'),   # Decision or draft resolution
-        '23.15': re.compile(r'.*')}   # Rules of order of the House
+    ITEM_TYPES = (r'(10\.04\.003)',       # 'Ειδικό ένταλμα πληρωμής'
+                  r'(10\.04\.002\.001)',  # Ministerial report
+                  r'(13\.06)',   # Budget-related decision—maybe?
+                  r'(23\.01)\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$',  # Government bill
+                  r'(23\.02)\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$',  # Members' bill
+                  r'(23\.03)\.(?:\d{3}\.|0\d{1,2}\.\d{3}-)\d{4}$',  # Draft regulations
+                  r'(23\.04)',   # Something or other to do with committees
+                  r'(23\.05)',   # Debate topic
+                  r'(23\.10)',   # Decision or draft resolution
+                  r'(23\.15)')   # Rules of order of the House
+    ITEM_TYPES = tuple(re.compile(i).match for i in ITEM_TYPES)
 
     @classmethod
     def _group(cls, item):
-        id_, key = item[0], item[0][:5]
+        item_type = filter(None, (m(item[0]) for m in cls.ITEM_TYPES))
         try:
-            return cls.ITEM_TYPES[key].match(id_) and key
-        except KeyError:
+            return next(item_type).group(1)
+        except StopIteration:
             return
 
     _AgendaItems = namedtuple('AgendaItems', 'cap1 cap4 bills_and_regs')
@@ -114,8 +116,9 @@ class AgendaItems:
         for k, v in it.groupby(agenda_items_, key=cls._group):   # __init__ bypasses __setitem__ (maybe)
             agenda_items[k] = tuple(v)
         if None in agenda_items:
-            logger.warning('Unparsed items {} in {!r}'.format(
-                tuple(k for k, *_ in agenda_items[None]), url))
+            logger.warning('Unparsed items {} in {!r}'
+                           .format(tuple(k for k, *_ in agenda_items[None]),
+                                   url))
 
         return cls._AgendaItems(
             *map(lambda v: sorted(v, key=agenda_items_.index),
@@ -137,8 +140,8 @@ def _extract_id_and_title(url, item):
 
     id_ = RE_ID.search(item)
     if not id_:
-        logger.info('Unable to extract document type'
-                    ' of {!r} in {!r}'.format(item, url))
+        logger.info('Unable to extract document type of {!r} in {!r}'
+                    .format(item, url))
         return
 
     # Concatenate the rows into a title string, extract the number,
@@ -148,8 +151,8 @@ def _extract_id_and_title(url, item):
     if id_ and title:
         return id_, title
     else:
-        logger.warning('Number or title empty in {} in {!r}'.format(
-            (id_, title), url))
+        logger.warning('Number or title empty in {} in {!r}'
+                       .format((id_, title), url))
 
 
 RE_PPERIOD = re.compile(r'_?(\w+?)[\'΄´] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')

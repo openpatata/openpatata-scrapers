@@ -6,9 +6,10 @@ import re
 from lxml.html import HtmlElement
 
 from . import _models as models
+from ._name_convert import c14n_name_from_declined
 from ..crawling import Task
-from ..text_utils import (apply_subs, clean_spaces, CanonicaliseName,
-                          parse_long_date, ungarble_qh)
+from ..text_utils import (apply_subs, clean_spaces, parse_long_date,
+                          ungarble_qh)
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def _parse_question(url, heading, body, footer, counter):
         return
 
     names = RE_NAMES.findall(RE_NAMES_PREPARE.sub('', heading.text))
-    names = (CanonicaliseName.from_declined(name) or logger.warning(
+    names = (c14n_name_from_declined(name) or logger.warning(
         'No match found for name {!r} in heading {!r}'
         ' in {!r}'.format(name, heading.text, url)) for name in names)
     names = list(filter(None, names))

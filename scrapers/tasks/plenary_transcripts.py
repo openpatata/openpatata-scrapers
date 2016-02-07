@@ -11,14 +11,15 @@ import pandocfilters
 from ._models import \
     (Bill, BillActions, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting,
      InsertError)
-from ..crawling import Task
-from ..misc_utils import starfilter
-from ..tasks.plenary_agendas import \
+from ._name_convert import c14n_name_from_garbled
+from .plenary_agendas import \
     (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
      AgendaItems, extract_parliamentary_period, extract_session)
+from ..crawling import Task
+from ..misc_utils import starfilter
 from ..text_utils import \
-    (apply_subs, CanonicaliseName, clean_spaces, date2dato, pandoc_json_to,
-     parse_long_date, TableParser)
+    (apply_subs, clean_spaces, date2dato, pandoc_json_to, parse_long_date,
+     TableParser)
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +63,14 @@ def _extract_attendee_name(url, name):
     if name.isdigit():
         return      # Skip page numbers
 
-    new_name = CanonicaliseName.from_garbled(
-        clean_spaces(name, medial_newlines=True))
+    new_name = c14n_name_from_garbled(clean_spaces(name, medial_newlines=True))
     if not new_name:
-        logger.warning('Unable to pair name {!r} with MP on record'
-                       ' while parsing {!r}'.format(name, url))
+        logger.warning('Unable to pair name {!r} with MP on record while'
+                       ' parsing attendee table in {!r}'.format(name, url))
         return
     if name != new_name:
-        logger.info('Name {!r} converted to {!r}'
-                    ' while parsing {!r}'.format(name, new_name, url))
+        logger.info('Name {!r} converted to {!r} while parsing'
+                    ' attendee table in {!r}'.format(name, new_name, url))
     return new_name
 
 
@@ -141,14 +141,14 @@ def _extract_cap2_item(url, item):
     try:
         title, sponsors, committees = item
     except ValueError:
-        logger.warning('Unable to parse Chapter 2 item {}'
-                       ' in {!r}'.format(item, url))
+        logger.warning('Unable to parse Chapter 2 item {} in {!r}'
+                       .format(item, url))
         return
 
     id_ = RE_ID.search(title)
     if not id_:
-        logger.info('Unable to extract document type'
-                    ' of {} in {!r}'.format(item, url))
+        logger.info('Unable to extract document type of {} in {!r}'
+                    .format(item, url))
         return
     return _Cap2Item(id_.group(1), RE_TITLE_OTHER.sub('', title).rstrip('. '),
                      sponsors, committees)
@@ -285,8 +285,8 @@ def _parse_transcript(url, func, content):
         return
 
     if func == 'docx_to_json':
-        cap2, bills_and_regs = _extract_pandoc_cap2(url, content) or \
-            ((), ())
+        cap2, bills_and_regs = (_extract_pandoc_cap2(url, content) or
+                                ((), ()))
     else:
         cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
 
@@ -306,10 +306,11 @@ def _parse_transcript(url, func, content):
 
     for bill_ in bills_and_regs:
         try:
-            actions = [BillActions.Submission(
+            actions = BillActions.Submission(
                 at_plenary_id=plenary_sitting._id,
                 sponsors=bill_.sponsors,
-                committees_referred_to=bill_.committees)]
+                committees_referred_to=bill_.committees)
+            actions = [actions]
         except ValueError:
             # Discard likely malformed bills
             logger.error('Unable to parse {!r} into a bill'.format(bill_))
