@@ -34,13 +34,13 @@ class Bill(InsertableRecord):
                                               }}}
 
         data = yield
-        other_titles = sorted(data['other_titles'],
-                              key=lambda v: tuple(reversed(v.rpartition(' '))))
+        titles = sorted([data['title']] + data['other_titles'],
+                        key=lambda v: tuple(reversed(v.rpartition(' '))))
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'actions': {'$each': [],
                                      '$sort': {'at_plenary_id': 1}}},
-               '$set': {'title': other_titles[-1],
-                        'other_titles': other_titles}}
+               '$set': {'title': titles[-1],
+                        'other_titles': titles[:-1]}}
 
 
 class BillActions:
