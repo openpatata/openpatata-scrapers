@@ -14,8 +14,8 @@ from . import config
 from .text_utils import doc_to_text, docx_to_json, html_to_lxml, pdf_to_text
 
 _CACHE = MongoClient()[config.CACHE_DB_NAME]
-_CACHE = namedtuple('_CACHE', 'file, text')(gridfs.GridFS(_CACHE),
-                                            _CACHE['text'])
+_CACHE = namedtuple('_CACHE', 'file text')(gridfs.GridFS(_CACHE),
+                                           _CACHE['text'])
 
 
 class Crawler:
@@ -36,7 +36,7 @@ class Crawler:
                            loop=self._loop) \
                 as self._session:
             output = self._loop.run_until_complete(task(self)())
-        task.after(output)
+        return task.after(output)
 
     def exec_blocking(self, func):
         """Execute blocking operations independently of the async loop.
@@ -122,5 +122,5 @@ class Task:
         self.crawler = self.c = crawler
 
     def after(output):
-        """Overload to handle the output of the `Task`."""
-        raise NotImplementedError
+        """Override to handle the output of the `Task`."""
+        return output

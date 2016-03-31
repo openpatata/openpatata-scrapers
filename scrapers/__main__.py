@@ -126,8 +126,8 @@ def export(args):
         --locale=<locale>   Localise in <locale> [default: el]
         -h --help           Show this screen
     """
-    from .tasks._models import MP
-    print(MP.export_all_to_popolo(args['--locale']))
+    from .tasks._models import export_all_to_popolo
+    print(export_all_to_popolo(args['--locale']))
 
 
 @_register

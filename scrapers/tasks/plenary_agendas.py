@@ -22,7 +22,7 @@ class PlenaryAgendas(Task):
         html = await self.c.get_html(url)
 
         agenda_urls = await self.c.gather(
-            {self.process_agenda_listing_1p(href)
+            {self.process_multi_page_listing(href)
              for href in html.xpath('//a[@class="h3Style"]/@href')})
         agenda_urls = it.chain.from_iterable(agenda_urls)
         return await self.c.gather({self.process_agenda(href)
@@ -30,21 +30,20 @@ class PlenaryAgendas(Task):
 
     __call__ = process_agenda_index
 
-    async def process_agenda_listing_1p(self, url):
+    async def process_multi_page_listing(self, url):
         html = await self.c.get_html(url)
         pages = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
         if pages:
-            pages = {
-                self.process_agenda_listing_2p(
-                    url, form_data={'page': ''.join(filter(str.isdigit, p))})
-                for p in pages}
+            pages = {self.process_multi_page_page(
+                      url, form_data={'page': ''.join(filter(str.isdigit, p))})
+                     for p in pages}
             return it.chain.from_iterable(await self.c.gather(pages))
         else:
-            return await self.process_agenda_listing_2p(url)
+            return await self.process_multi_page_page(url)
 
-    async def process_agenda_listing_2p(self, url, form_data=None):
-        html = await self.c.get_html(
-            url, form_data=form_data, request_method='post')
+    async def process_multi_page_page(self, url, form_data=None):
+        html = await self.c.get_html(url, form_data=form_data,
+                                     request_method='post')
         return html.xpath('//a[@class="h3Style"]/@href')
 
     async def process_agenda(self, url):
