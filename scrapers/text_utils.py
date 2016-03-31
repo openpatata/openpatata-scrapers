@@ -194,7 +194,12 @@ class _Translit:
        >>> translit_unaccent_lc('Ένα duo 3!')
        'ενα duo 3!'
 
-    3. Transliterate a Greek name into Turkish.
+    3. Romanise a Greek name.
+
+       >>> translit_elGrek2Latn('Ομήρου Γιαννάκης')
+       'Omirou Giannakis'
+
+    4. Transliterate a Greek name into Turkish.
 
        >>> translit_el2tr('Ομήρου Γιαννάκης')
        'Omíru Yiannákis'
@@ -213,6 +218,9 @@ class _Translit:
     translit_unaccent_lc = icu.Transliterator.createInstance(
         'NFKD; [:nonspacing mark:] any-remove; any-lower').transliterate
 
+    translit_elGrek2Latn = icu.Transliterator.createInstance(
+        'Greek-Latin/UNGEGN; Latin-ASCII').transliterate
+
     with (Path(__file__).parent/'translit'/'Greek-Turkish.xml').open('rb') \
             as _file:
         _xml = lxml.etree.fromstring(_file.read())
@@ -222,6 +230,7 @@ class _Translit:
 
 translit_slugify = _Translit.translit_slugify
 translit_unaccent_lc = _Translit.translit_unaccent_lc
+translit_elGrek2Latn = _Translit.translit_elGrek2Latn
 translit_el2tr = _Translit.translit_el2tr
 
 

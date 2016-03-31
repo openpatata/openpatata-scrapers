@@ -80,7 +80,48 @@ class CommitteeReport(InsertableRecord):
 class MP(InsertableRecord):
 
     collection = 'mps'
+    template = {'_sources': [],
+                'birth_date': None,
+                'email': None,
+                'gender': None,
+                'image': None,
+                'images': [],
+                'links': [],
+                'name': None,
+                'other_names': [],
+                'tenures': []}
+    required_properties = ('_sources', 'name')
 
+    def generate__id(self):
+        from ..text_utils import translit_slugify
+        return translit_slugify(self.data['name']['el'])
+
+    def generate_inserts(self, merge):
+        data = yield
+        if merge:
+            yield {
+                '$set': data,
+                '$addToSet': {'_sources': {'$each': data.pop('_sources')},
+                              'other_names': {'$each': data.pop('other_names',
+                                                                [])}
+                              }}
+        else:
+            yield {'$set': data}
+
+
+class MultilingualField(SubRecord):
+
+    template = {'el': None, 'en': None, 'tr': None}
+
+
+class OtherName(SubRecord):
+
+    template = {'name': None, 'note': None}
+
+
+class ParliamentaryGroup(InsertableRecord):
+
+    collection = 'parliamentary_groups'
 
 
 class PlenaryAgenda(SubRecord):
