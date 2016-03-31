@@ -254,7 +254,8 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
 
     def __init__(self, *, _raw_data={}, **kwargs):
         super().__init__(_raw_data=_raw_data, **kwargs)
-        self.data['_id'] = self.generate__id()
+        if not _raw_data:
+            self.data['_id'] = self.generate__id()
 
     @property
     def _id(self):
