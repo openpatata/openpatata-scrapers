@@ -2,7 +2,7 @@
 import itertools as it
 import logging
 
-from ._models import InsertError, MP, MultilingualField, OtherName
+from ._models import MP, MultilingualField, OtherName
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
@@ -138,5 +138,5 @@ def _parse_mp(url, html_el, html_en):
                                     " possibly anglicised")])
     try:
         mp.insert(merge=mp.exists)
-    except InsertError as e:
+    except mp.InsertError as e:
         logger.error(e)

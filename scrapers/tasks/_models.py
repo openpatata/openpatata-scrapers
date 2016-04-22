@@ -6,12 +6,15 @@ import itertools as it
 import json
 from pathlib import Path
 
-from ..records import InsertError, InsertableRecord, SubRecord
+from .. import get_database
+from ..records import InsertableRecord, SubRecord
+
+db = get_database()
 
 
 class Bill(InsertableRecord):
 
-    collection = 'bills'
+    collection = db.bills
     template = {'_sources': [],
                 'actions': [],
                 'identifier': None,
@@ -57,7 +60,7 @@ class BillActions:
 
 class CommitteeReport(InsertableRecord):
 
-    collection = 'committee_reports'
+    collection = db.committee_reports
     template = {'_sources': [],
                 'attendees': [],
                 'date_circulated': None,
@@ -79,7 +82,7 @@ class CommitteeReport(InsertableRecord):
 
 class MP(InsertableRecord):
 
-    collection = 'mps'
+    collection = db.mps
     template = {'_sources': [],
                 'birth_date': None,
                 'email': None,
@@ -121,7 +124,7 @@ class OtherName(SubRecord):
 
 class ParliamentaryGroup(InsertableRecord):
 
-    collection = 'parliamentary_groups'
+    collection = db.parliamentary_groups
 
 
 class PlenaryAgenda(SubRecord):
@@ -137,7 +140,7 @@ class PlenaryAgendaLink(SubRecord):
 
 class PlenarySitting(InsertableRecord):
 
-    collection = 'plenary_sittings'
+    collection = db.plenary_sittings
     template = {'_sources': [],
                 'agenda': {},
                 'attendees': [],
@@ -173,7 +176,7 @@ class PlenarySitting(InsertableRecord):
 
 class Question(InsertableRecord):
 
-    collection = 'questions'
+    collection = db.questions
     template = {'_position_on_page': None,
                 '_sources': [],
                 'answers': [],

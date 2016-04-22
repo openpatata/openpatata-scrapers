@@ -7,7 +7,6 @@ import itertools as it
 
 import pymongo
 
-from . import db
 from .misc_utils import starfilter
 
 
@@ -131,23 +130,9 @@ class BaseRecord(metaclass=_prepare_record):
 
 class _prepare_insertable_record(_prepare_record):
 
-    class _exceptionally_erroneous_collection:
-
-        def __init__(self, e):
-            self.e = e
-
-        def __get__(self, instance, owner):
-            raise self.e
-
     def __new__(cls, name, bases, cls_dict):
-        cls_dict['template'] = cls_dict.get('template', {})
-        cls_dict['template']['_id'] = None
-        cls = super().__new__(cls, name, bases, cls_dict)
-        try:
-            cls.collection = db[cls.collection]
-        except Exception as e:
-            cls.collection = cls._exceptionally_erroneous_collection(e)
-        return cls
+        cls_dict['template'] = {'_id': None, **cls_dict.get('template', {})}
+        return super().__new__(cls, name, bases, cls_dict)
 
 
 class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
@@ -156,23 +141,18 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
     To interface with the database, `InsertableRecord`s must define a
     `collection` name.
 
-    This is where we set up the testing environment.
-    `doctest` makes a shallow copy of `globals()`, but we wanna redefine
-    `db` globally to be picked up by `_prepare_insertable_record`.
-    Fixtures are only available to `rst` doctests, so we've got to resort
-    to whatever this is.  (We should really, really be using `unittest`s.)
+    Set up the testing environment.
 
         >>> from uuid import uuid4
-        >>> from . import get_database, records
+        >>> from . import get_database \
+
         >>> test_db_name = uuid4().hex
-        >>> records.db = get_database(test_db_name)
-        >>> records.db.name == db.name
-        False
+        >>> test_db = get_database(test_db_name)
 
     Test basic operation.
 
-        >>> class Insertable(records.InsertableRecord):
-        ...     collection = 'test'
+        >>> class Insertable(InsertableRecord):
+        ...     collection = test_db.test
         ...     template = {'some_field': 'some_data'} \
 
         ...     def generate__id(self):
@@ -216,39 +196,9 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                   ('some_field', 'some_data')])>
         with operation {'$set': OrderedDict([('some_field', 'some_data')])}
 
-    Test that undefined or ill-defined collections will throw an(y) error
-    upon both class and instance access.
-
-        >>> class Insertable(records.InsertableRecord):
-        ...     def generate__id(self):
-        ...         return 'insertable_test'
-
-        >>> Insertable.collection   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
-        Traceback (most recent call last):
-          ...
-        AttributeError: type object 'InsertableRecord' has no attribute 'collection'
-        >>> baz = Insertable()
-        >>> baz.collection      # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
-        Traceback (most recent call last):
-          ...
-        AttributeError: type object 'InsertableRecord' has no attribute 'collection'
-
-        >>> class Insertable(records.InsertableRecord):
-        ...     collection = '' \
-
-        ...     def generate__id(self):
-        ...         return 'insertable_test'
-
-        >>> qux = Insertable()
-        >>> qux.collection      # doctest: +ELLIPSIS
-        Traceback (most recent call last):
-          ...
-        pymongo.errors.InvalidName: collection names cannot be empty
-
     Tear it all down.
 
-        >>> (records.db.command('dropDatabase') ==
-        ...  {'dropped': test_db_name, 'ok': 1.0})
+        >>> db.command('dropDatabase') == {'dropped': test_db_name, 'ok': 1.0}
         True
     """
 
@@ -323,6 +273,8 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                   ' with operation ' + repr(insert))
         self.data = data
         return data
+
+    InsertError = InsertError
 
 
 class _prepare_sub_record(_prepare_record):

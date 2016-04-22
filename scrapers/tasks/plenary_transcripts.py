@@ -9,8 +9,7 @@ import re
 import pandocfilters
 
 from ._models import \
-    (Bill, BillActions, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting,
-     InsertError)
+    Bill, BillActions, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting
 from ._name_convert import c14n_name_from_garbled
 from .plenary_agendas import \
     (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
@@ -301,7 +300,7 @@ def _parse_transcript(url, func, content):
         sitting=_extract_sitting(url, heading))
     try:
         plenary_sitting.insert(merge=plenary_sitting.exists)
-    except InsertError as e:
+    except plenary_sitting.InsertError as e:
         logger.error(e)
 
     for bill_ in bills_and_regs:
@@ -320,5 +319,5 @@ def _parse_transcript(url, func, content):
                     title=bill_.title, other_titles=[bill_.title])
         try:
             bill.insert(merge=bill.exists)
-        except InsertError as e:
+        except bill.InsertError as e:
             logger.error(e)

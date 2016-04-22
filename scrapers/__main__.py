@@ -25,7 +25,7 @@ from textwrap import dedent
 
 from docopt import docopt, DocoptExit
 
-from . import config, db, io
+from . import config, get_database, io
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ def init(args):
         -h --help       Show this screen
     """
     def _init(import_path, dirs):
+        db = get_database()
         db.command('dropDatabase')
 
         files = it.chain.from_iterable(map(
@@ -97,7 +98,7 @@ def dump(args):
         -h --help               Show this screen
     """
     def _dump(collection, location):
-        collection = db[collection]
+        collection = get_database()[collection]
         if collection.count() == 0:
             raise DocoptExit('Collection {!r} is empty'
                              .format(collection.full_name))

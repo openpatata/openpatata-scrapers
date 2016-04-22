@@ -5,8 +5,7 @@ import itertools as it
 import logging
 import re
 
-from ._models import \
-    Bill, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting, InsertError
+from ._models import Bill, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date, TableParser,
                           ungarble_qh)
@@ -59,7 +58,7 @@ class PlenaryAgendas(Task):
                 filter(None, (fn(url, c) for fn, (url, c) in output)):
             try:
                 plenary_sitting.insert(merge=plenary_sitting.exists)
-            except InsertError as e:
+            except plenary_sitting.InsertError as e:
                 logger.error(e)
 
             for id_, title in bills:
@@ -67,7 +66,7 @@ class PlenaryAgendas(Task):
                             other_titles=[title])
                 try:
                     bill.insert(merge=bill.exists)
-                except InsertError as e:
+                except bill.InsertError as e:
                     logger.error(e)
 
 
