@@ -147,7 +147,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         >>> from . import get_database \
 
         >>> test_db_name = uuid4().hex
-        >>> test_db = get_database(test_db_name)
+        >>> test_db = get_database('mongodb://localhost:27017/' + test_db_name)
 
     Test basic operation.
 
@@ -198,7 +198,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
 
     Tear it all down.
 
-        >>> db.command('dropDatabase') == {'dropped': test_db_name, 'ok': 1.0}
+        >>> test_db.command('dropDatabase') == {'dropped': test_db_name, 'ok': 1.0}
         True
     """
 

@@ -25,7 +25,7 @@ from textwrap import dedent
 
 from docopt import docopt, DocoptExit
 
-from . import config, get_database, io
+from . import get_database, io
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +54,15 @@ def init(args):
         db.command('dropDatabase')
 
         files = it.chain.from_iterable(map(
-            lambda dir_: zip(Path(import_path or
-                                  config.IMPORT_PATH, dir_).iterdir(),
+            lambda dir_: zip(Path(import_path, dir_).iterdir(),
                              it.repeat(dir_)),
-            dirs or config.IMPORT_DIRS))
+            dirs))
         for path, collection in files:
             db[collection].insert_one(io.YamlManager.load_record(str(path),
                                                                  path.stem))
 
-    _init(args['<from_path>'], args['<import>'])
+    _init(args['<from_path>'] or './data',
+          args['<import>'] or ('bills', 'mps', 'plenary_sittings', 'questions'))
 
 
 @_register
@@ -95,6 +95,7 @@ def dump(args):
 
     Options:
         --location=<location>   Path on disk where to gently deposit the data
+                                    [default: ./data-new]
         -h --help               Show this screen
     """
     def _dump(collection, location):
@@ -103,7 +104,7 @@ def dump(args):
             raise DocoptExit('Collection {!r} is empty'
                              .format(collection.full_name))
 
-        head = Path(location or config.EXPORT_PATH)/collection.name
+        head = Path(location)/collection.name
         if not head.exists():
             head.mkdir(parents=True)
         for document in collection.find():
