@@ -9,10 +9,10 @@ from aiohttp import ClientSession, TCPConnector
 import gridfs
 import magic
 
-from . import config, get_database
+from . import config, Db
 from .text_utils import doc_to_text, docx_to_json, html_to_lxml, pdf_to_text
 
-_CACHE = get_database(config.CACHE_DB)
+_CACHE = Db.get(config.CACHE_DB)
 _CACHE = namedtuple('_CACHE', 'file text')(gridfs.GridFS(_CACHE),
                                            _CACHE['text'])
 

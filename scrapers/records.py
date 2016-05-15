@@ -144,10 +144,10 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
     Set up the testing environment.
 
         >>> from uuid import uuid4
-        >>> from . import get_database \
+        >>> from . import Db \
 
         >>> test_db_name = uuid4().hex
-        >>> test_db = get_database('mongodb://localhost:27017/' + test_db_name)
+        >>> test_db = Db.get('mongodb://localhost:27017/' + test_db_name)
 
     Test basic operation.
 

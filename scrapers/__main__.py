@@ -25,7 +25,7 @@ from textwrap import dedent
 
 from docopt import docopt, DocoptExit
 
-from . import get_database, io
+from . import default_db, io
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,6 @@ def init(args):
         -h --help       Show this screen
     """
     def _init(import_path, dirs):
-        db = get_database()
         db.command('dropDatabase')
 
         files = it.chain.from_iterable(map(
@@ -58,8 +57,8 @@ def init(args):
                              it.repeat(dir_)),
             dirs))
         for path, collection in files:
-            db[collection].insert_one(io.YamlManager.load_record(str(path),
-                                                                 path.stem))
+            default_db[collection].insert_one(
+                io.YamlManager.load_record(str(path), path.stem))
 
     _init(args['<from_path>'] or './data',
           args['<import>'] or ('bills', 'mps', 'plenary_sittings', 'questions'))
@@ -99,7 +98,7 @@ def dump(args):
         -h --help               Show this screen
     """
     def _dump(collection, location):
-        collection = get_database()[collection]
+        collection = default_db[collection]
         if collection.count() == 0:
             raise DocoptExit('Collection {!r} is empty'
                              .format(collection.full_name))
