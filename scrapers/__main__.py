@@ -1,5 +1,6 @@
 
-"""Cypriot-parliament scraper.
+"""\
+Cypriot-parliament scraper.
 
 This package collects and stratifies some of what's made available on
 the Cypriot parliament's website.  For more information, please see the
@@ -10,7 +11,7 @@ Usage: scrapers [-v] <command> [<args> ...]
 Commands:
     init            Populate the database
     run             Run a scraping task
-    dump            Dump a collection (table) to disk
+    dump            Dump a collection (table) on disk
     clear_cache     Clear the crawler's cache
 
 Options:
@@ -41,16 +42,18 @@ def _register(fn):
 
 @_register
 def init(args):
-    """Usage: scrapers init [<from_path> [<import> ...]]
+    """Usage: scrapers init [--drop-db] [<from-path> [<import> ...]]
 
-    Populate the database <from_path>, defaulting to './data', and
+    Populate the database <from-path>, defaulting to './data', and
     enclosing <import> directories.
 
     Options:
+        --drop-db       Drop the database before importing
         -h --help       Show this screen
     """
-    def _init(import_path, dirs):
-        db.command('dropDatabase')
+    def _init(import_path, dirs, drop_db):
+        if drop_db:
+            default_db.command('dropDatabase')
 
         files = it.chain.from_iterable(map(
             lambda dir_: zip(Path(import_path, dir_).iterdir(),
@@ -60,8 +63,8 @@ def init(args):
             default_db[collection].insert_one(
                 io.YamlManager.load_record(str(path), path.stem))
 
-    _init(args['<from_path>'] or './data',
-          args['<import>'] or ('bills', 'mps', 'plenary_sittings', 'questions'))
+    _init(args['<from-path>'] or './data', args['<import>'] or ('mps',),
+          args['--drop-db'])
 
 
 @_register
@@ -88,7 +91,7 @@ def run(args):
 
 @_register
 def dump(args):
-    """Usage: scrapers dump [--location=<location>] [<collections> ...]
+    """Usage: scrapers dump [--location=<location>] (<collections> ...)
 
     Dump a <collection> (table) at <location>, defaulting to './data-new'.
 
