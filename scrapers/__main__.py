@@ -56,7 +56,7 @@ def init(args):
             default_db.command('dropDatabase')
 
         files = it.chain.from_iterable(map(
-            lambda dir_: zip(Path(import_path, dir_).iterdir(),
+            lambda dir_: zip(Path(import_path, dir_).glob('*.yaml'),
                              it.repeat(dir_)),
             dirs))
         for path, collection in files:
