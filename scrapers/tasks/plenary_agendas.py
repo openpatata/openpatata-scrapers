@@ -54,16 +54,24 @@ class PlenaryAgendas(Task):
             return _parse_agenda, (url, html)
 
     def after(output):
-        for url, plenary_sitting, bills in \
+        for url, date, text, agenda_items in \
                 filter(None, (fn(url, c) for fn, (url, c) in output)):
+            plenary_sitting = PlenarySitting(
+                _sources=[url],
+                agenda=PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
+                                     cap4=[i for i, _ in agenda_items.cap4]),
+                date=date,
+                links=[PlenaryAgendaLink(type='agenda', url=url)],
+                parliamentary_period=extract_parliamentary_period(url, text),
+                session=extract_session(url, text),
+                sitting=extract_sitting(url, text))
             try:
                 plenary_sitting.insert(merge=plenary_sitting.exists)
             except plenary_sitting.InsertError as e:
                 logger.error(e)
 
-            for id_, title in bills:
-                bill = Bill(_sources=[url], identifier=id_, title=title,
-                            other_titles=[title])
+            for id_, title in agenda_items.bills_and_regs:
+                bill = Bill(_sources=[url], identifier=id_, title=title)
                 try:
                     bill.insert(merge=bill.exists)
                 except bill.InsertError as e:
@@ -209,20 +217,9 @@ def _parse_agenda(url, html):
     agenda_items = filter(None, map(_extract_id_and_title,
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
-
-    return (
-        url,
-        PlenarySitting(
-            _sources=[url],
-            agenda=PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
-                                 cap4=[i for i, _ in agenda_items.cap4]),
-            date=parse_long_date(clean_spaces(html.xpath('string(//h1)')),
-                                 plenary=True),
-            links=[PlenaryAgendaLink(type='agenda', url=url)],
-            parliamentary_period=extract_parliamentary_period(url, text),
-            session=extract_session(url, text),
-            sitting=extract_sitting(url, text)),
-        agenda_items.bills_and_regs)
+    return url, \
+        parse_long_date(clean_spaces(html.xpath('string(//h1)')), plenary=True), \
+        text, agenda_items
 
 
 RE_PAGE_NO = re.compile(r'^ +(?:\d+|\w)$', re.MULTILINE)
@@ -270,17 +267,6 @@ def _parse_pdf_agenda(url, text):
     agenda_items = filter(None, map(_extract_id_and_title,
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
-
-    return (
-        url,
-        PlenarySitting(
-            _sources=[url],
-            agenda=PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
-                                 cap4=[i for i, _ in agenda_items.cap4]),
-            date=parse_long_date(clean_spaces(pages[0], medial_newlines=True),
-                                 plenary=True),
-            links=[PlenaryAgendaLink(type='agenda', url=url)],
-            parliamentary_period=extract_parliamentary_period(url, text),
-            session=extract_session(url, text),
-            sitting=extract_sitting(url, text)),
-        agenda_items.bills_and_regs)
+    return url, \
+        parse_long_date(clean_spaces(pages[0], medial_newlines=True), plenary=True), \
+        text, agenda_items
