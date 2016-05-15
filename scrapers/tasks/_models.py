@@ -19,8 +19,8 @@ class Bill(InsertableRecord):
                 'actions': [],
                 'identifier': None,
                 'title': None,
-                'other_titles': []}
-    required_properties = ('_sources', 'identifier', 'title', 'other_titles')
+                'titles': []}
+    required_properties = ('_sources', 'identifier', 'title')
 
     def generate__id(self):
         return self.data['identifier']
@@ -28,22 +28,23 @@ class Bill(InsertableRecord):
     def generate_inserts(self, merge):
         data = yield
         if not merge:
-            yield {'$set': data}
+            yield {'$set': {**data, 'titles': [data['title']]}}
             return
         yield {'$set': data,
                '$addToSet': {'_sources': {'$each': data.pop('_sources')},
                              'actions': {'$each': data.pop('actions', [])},
-                             'other_titles': {'$each': data.pop('other_titles')
-                                              }}}
+                             'titles': {'$each': [data.pop('title')]}}}
 
         data = yield
-        titles = sorted([data['title']] + data['other_titles'],
-                        key=lambda v: tuple(reversed(v.rpartition(' '))))
+        titles = data['titles']
+        if len(titles) > 1:
+            titles = sorted(data['titles'],
+                            key=lambda v: v.rpartition(' ')[::-1])
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'actions': {'$each': [],
                                      '$sort': {'at_plenary_id': 1}}},
                '$set': {'title': titles[-1],
-                        'other_titles': titles[:-1]}}
+                        'titles': titles}}
 
 
 class BillActions:

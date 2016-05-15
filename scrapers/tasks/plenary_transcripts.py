@@ -316,7 +316,7 @@ def _parse_transcript(url, func, content):
             continue
 
         bill = Bill(_sources=[url], actions=actions, identifier=bill_.number,
-                    title=bill_.title, other_titles=[bill_.title])
+                    title=bill_.title)
         try:
             bill.insert(merge=bill.exists)
         except bill.InsertError as e:
