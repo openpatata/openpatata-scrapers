@@ -42,29 +42,28 @@ def _register(fn):
 
 @_register
 def init(args):
-    """Usage: scrapers init [--drop-db] [<from-path> [<import> ...]]
+    """Usage: scrapers init [--keep-db] [<from-folders> ...]
 
-    Populate the database <from-path>, defaulting to './data', and
-    enclosing <import> directories.
+    Populate the database <from-folders>, defaulting to just './data/mps'.
 
     Options:
-        --drop-db       Drop the database before importing
+        --keep-db       Don't drop the database before importing
         -h --help       Show this screen
     """
-    def _init(import_path, dirs, drop_db):
-        if drop_db:
+    def _init(folders, keep_db):
+        if not keep_db:
             default_db.command('dropDatabase')
 
         files = it.chain.from_iterable(map(
-            lambda dir_: zip(Path(import_path, dir_).glob('*.yaml'),
-                             it.repeat(dir_)),
-            dirs))
+            lambda folder: (
+                lambda folder: zip(folder.glob('*.yaml'),
+                                   it.repeat(folder.stem)))(Path(folder)),
+            folders))
         for path, collection in files:
             default_db[collection].insert_one(
                 io.YamlManager.load_record(str(path), path.stem))
 
-    _init(args['<from-path>'] or './data', args['<import>'] or ('mps',),
-          args['--drop-db'])
+    _init(args['<from-folders>'] or ('./data/mps',), args['--keep-db'])
 
 
 @_register
@@ -121,17 +120,23 @@ def dump(args):
 
 @_register
 def export(args):
-    """Usage: scrapers export [--locale=<locale>]
-
-    Export the MP (person) collection to Popolo JSON.  This follows a similar
-    format to everypolitician's (<https://github.com/everypolitician>).
+    """Usage: scrapers export [--format=<format>] <collection>
 
     Options:
-        --locale=<locale>   Localise in <locale> [default: el]
+        --format=<format>   Export format [default: csv]
         -h --help           Show this screen
     """
-    from .tasks._models import export_all_to_popolo
-    print(export_all_to_popolo(args['--locale']))
+    def _export(collection, format_):
+        from .tasks import _is_subclass, _models
+        export_fns = {m.collection.name: m.export
+                      for m in _models.__dict__.values()
+                      if _is_subclass(m, _models.InsertableRecord)}
+        try:
+            print(export_fns[collection](format_))
+        except KeyError:
+            raise DocoptExit('No collection {!r}'.format(collection))
+
+    _export(args['<collection>'], args['--format'])
 
 
 @_register

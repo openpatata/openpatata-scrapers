@@ -5,7 +5,7 @@ then
     svn co --non-interactive --trust-server-cert \
            https://github.com/openpatata/openpatata-data/trunk/mps \
            travis-data/mps
-    python3 -m scrapers init --drop-db travis-data mps
+    python3 -m scrapers init travis-data/mps
 fi
 
 nosetests --ignore-files='^\\.' --ignore-files='^setup\\.py$' \

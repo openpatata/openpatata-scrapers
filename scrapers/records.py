@@ -8,6 +8,7 @@ import itertools as it
 import pymongo
 
 from .misc_utils import starfilter
+from .text_utils import _text_from_sp
 
 
 class InsertError(Exception):
@@ -131,8 +132,9 @@ class BaseRecord(metaclass=_prepare_record):
 class _prepare_insertable_record(_prepare_record):
 
     def __new__(cls, name, bases, cls_dict):
-        cls_dict['template'] = {'_id': None, **cls_dict.get('template', {})}
-        return super().__new__(cls, name, bases, cls_dict)
+        return super().__new__(
+            cls, name, bases,
+            {**cls_dict, 'template': {**cls_dict.get('template', {}), '_id': None}})
 
 
 class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
@@ -223,6 +225,19 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         the database.
         """
         return bool(self.collection.find_one(filter={'_id': self._id}))
+
+    @classmethod
+    def export(cls, format_='csv'):
+        if format_ == 'json':
+            return _text_from_sp(
+                ('mongoexport', '--jsonArray',
+                                '--db=' + cls.collection.database.name,
+                                '--collection=' + cls.collection.name))
+        return _text_from_sp(
+            ('mongoexport', '--type=' + format_,
+                            '--db=' + cls.collection.database.name,
+                            '--collection=' + cls.collection.name,
+                            '--fields=' + ','.join(sorted(cls.properties))))
 
     def generate__id(self):
         """Override to create an `_id`."""
