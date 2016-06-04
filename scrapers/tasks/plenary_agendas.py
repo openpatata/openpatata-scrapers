@@ -62,7 +62,7 @@ class PlenaryAgendas(Task):
                                      cap4=[i for i, _ in agenda_items.cap4]),
                 date=date,
                 links=[PlenaryAgendaLink(type='agenda', url=url)],
-                parliamentary_period=extract_parliamentary_period(url, text),
+                parliamentary_period_id=extract_parliamentary_period(url, text),
                 session=extract_session(url, text),
                 sitting=extract_sitting(url, text))
             try:

@@ -9,7 +9,7 @@ import re
 import pandocfilters
 
 from ._models import \
-    Bill, BillActions, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting
+    Bill, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting
 from ._name_convert import c14n_name_from_garbled
 from .plenary_agendas import \
     (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
@@ -295,7 +295,7 @@ def _parse_transcript(url, func, content):
         attendees=_extract_attendees(url, text, heading, date),
         date=date,
         links=[PlenaryAgendaLink(type='transcript', url=url)],
-        parliamentary_period=extract_parliamentary_period(url, heading),
+        parliamentary_period_id=extract_parliamentary_period(url, heading),
         session=extract_session(url, heading),
         sitting=_extract_sitting(url, heading))
     try:
@@ -305,7 +305,7 @@ def _parse_transcript(url, func, content):
 
     for bill_ in bills_and_regs:
         try:
-            actions = BillActions.Submission(
+            actions = Bill.Submission(
                 at_plenary_id=plenary_sitting._id,
                 sponsors=bill_.sponsors,
                 committees_referred_to=bill_.committees)

@@ -37,20 +37,16 @@ class Bill(InsertableRecord):
                             key=lambda v: v.rpartition(' ')[::-1])
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'actions': {'$each': [],
-                                     '$sort': {'at_plenary_id': 1}}},
+                                     '$sort': {'plenary_id': 1}}},
                '$set': {'title': titles[-1],
                         'titles': titles}}
 
-
-class BillActions:
-
     class Submission(SubRecord):
-
         template = {'action': 'submission',
-                    'at_plenary_id': None,
+                    'plenary_id': None,
                     'committees_referred_to': None,
                     'sponsors': None}
-        required_properties = ('at_plenary_id', 'committees_referred_to',
+        required_properties = ('plenary_id', 'committees_referred_to',
                                'sponsors')
 
 
@@ -170,13 +166,13 @@ class PlenarySitting(InsertableRecord):
                 'attendees': [],
                 'date': None,
                 'links': [],
-                'parliamentary_period': None,
+                'parliamentary_period_id': None,
                 'session': None,
                 'sitting': None}
-    required_properties = ('_sources', 'date', 'parliamentary_period')
+    required_properties = ('_sources', 'date', 'parliamentary_period_id')
 
     def generate__id(self):
-        data = map(self.data.get, ('date', 'parliamentary_period', 'session',
+        data = map(self.data.get, ('date', 'parliamentary_period_id', 'session',
                                    'sitting'))
         return '_'.join(map(str, data))
 
