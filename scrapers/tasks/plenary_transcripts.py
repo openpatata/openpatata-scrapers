@@ -8,8 +8,7 @@ import re
 
 import pandocfilters
 
-from ._models import \
-    Bill, PlenaryAgenda, PlenaryAgendaLink, PlenarySitting
+from ._models import Bill, PlenarySitting as PS
 from ._name_convert import c14n_name_from_garbled
 from .plenary_agendas import \
     (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
@@ -289,12 +288,12 @@ def _parse_transcript(url, func, content):
     else:
         cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
 
-    plenary_sitting = PlenarySitting(
+    plenary_sitting = PS(
         _sources=[url],
-        agenda=PlenaryAgenda(cap2=cap2),
+        agenda=PS.PlenaryAgenda(cap2=cap2),
         attendees=_extract_attendees(url, text, heading, date),
         date=date,
-        links=[PlenaryAgendaLink(type='transcript', url=url)],
+        links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
         parliamentary_period_id=extract_parliamentary_period(url, heading),
         session=extract_session(url, heading),
         sitting=_extract_sitting(url, heading))

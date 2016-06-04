@@ -168,17 +168,6 @@ class Party(InsertableRecord):
     required_properties = ('abbreviation', 'name')
 
 
-class PlenaryAgenda(SubRecord):
-
-    template = {'cap1': [], 'cap2': [], 'cap4': []}
-
-
-class PlenaryAgendaLink(SubRecord):
-
-    template = {'url': None, 'type': None}
-    required_properties = ('url', 'type')
-
-
 class PlenarySitting(InsertableRecord):
 
     collection = default_db.plenary_sittings
@@ -213,6 +202,13 @@ class PlenarySitting(InsertableRecord):
         _ = yield
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'links': {'$each': [], '$sort': {'type': 1}}}}
+
+    class PlenaryAgenda(SubRecord):
+        template = {'cap1': [], 'cap2': [], 'cap4': []}
+
+    class PlenaryAgendaLink(SubRecord):
+        template = {'url': None, 'type': None}
+        required_properties = ('url', 'type')
 
 
 class Question(InsertableRecord):
