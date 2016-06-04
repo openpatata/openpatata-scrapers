@@ -1,8 +1,9 @@
 
 import itertools as it
+import json
 import logging
 
-from ._models import MP, MultilingualField, OtherName
+from ._models import Identifier, MP, MultilingualField, OtherName
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
@@ -44,6 +45,30 @@ class MPs(Task):
     def after(output):
         for url, html_el, html_en in output:
             _parse_mp(url, html_el, html_en)
+
+
+class WikidataIds(Task):
+
+    async def __call__(self):
+        url = ('https://cdn.rawgit.com/everypolitician/everypolitician-data'
+               '/master/data/Cyprus/House_of_Representatives/ep-popolo-v1.0.json')
+        return await self.c.get_payload(url)
+
+    def after(ep_data):
+        ep_persons = (p for p in json.loads(ep_data.decode())['persons']
+                      if _extract_id(p, 'wikidata'))
+        for p in ep_persons:
+            wd = Identifier(identifier=_extract_id(p, 'wikidata'),
+                             scheme='http://www.wikidata.org/entity/')
+            mp = MP(_id=_extract_id(p, 'openpatata'), identifiers=[wd])
+            logger.info('Updating identifiers of {!r} with {!r}'
+                        .format(mp._id, mp.data['identifiers']))
+            mp.insert(merge=mp.exists)
+
+
+def _extract_id(person, scheme):
+    return next((i for i in person['identifiers'] if i['scheme'] == scheme),
+                {}).get('identifier')
 
 
 LABELS = {

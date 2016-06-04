@@ -78,6 +78,18 @@ class ElectoralDistrict(InsertableRecord):
     template = {'name': {}}
 
 
+class Identifier(SubRecord):
+
+    template = {'identifier': None, 'scheme': None}
+    required_properties = ('scheme',)
+
+
+class Link(SubRecord):
+
+    template = {'note': {}, 'url': None}
+    required_properties = ('note', 'url')
+
+
 class MP(InsertableRecord):
 
     collection = default_db.mps
@@ -85,15 +97,17 @@ class MP(InsertableRecord):
                 'birth_date': None,
                 'email': None,
                 'gender': None,
+                'identifiers': [],
                 'image': None,
                 'images': [],
                 'links': [],
                 'name': None,
                 'other_names': [],
                 'tenures': []}
-    required_properties = ('_sources', 'name')
 
     def generate__id(self):
+        if self.data['_id']:
+            return self.data['_id']
         from ..text_utils import translit_slugify
         return translit_slugify(self.data['name']['el'])
 
@@ -102,15 +116,22 @@ class MP(InsertableRecord):
         if not merge:
             yield {'$set': data}
             return
+        wd = next(i for i in data['identifiers']
+                  if i['scheme'] == 'http://www.wikidata.org/entity/')
+        if wd['identifier']:
+            yield {'$pull': {'identifiers': {'scheme': 'http://www.wikidata.org/entity/'}}}
+            data['name'] = (yield)['name']  # We gotta have something to set
         yield {'$set': data,
-               '$addToSet': {'_sources': {'$each': data.pop('_sources')},
-                             **{k: {'$each': data.pop(k, [])}
-                                for k in ('images', 'links', 'other_names',
-                                          'tenures')}}}
-
-    class Link(SubRecord):
-        template = {'note': {}, 'url': None}
-        required_properties = ('note', 'url')
+               '$addToSet': {k: {'$each': data.pop(k, [])}
+                             for k in ('_sources', 'identifiers', 'images',
+                                       'links', 'other_names', 'tenures')}}
+        data = yield
+        if sum(1 for i in data['identifiers']
+               if i['scheme'] == 'http://www.wikidata.org/entity/') > 1:
+            yield {'$pull': {'identifiers': {'identifier': None,
+                                             'scheme': 'http://www.wikidata.org/entity/'}}}
+        else:
+            yield {'$setOnInsert': data}
 
     class Tenure(SubRecord):
         template = {'electoral_district_id': None,
