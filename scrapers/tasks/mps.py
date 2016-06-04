@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class MPs(Task):
 
     async def __call__(self):
-        listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/186',
-                        'http://www.parliament.cy/easyconsole.cfm/id/904')
+        listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/181',
+                        'http://www.parliament.cy/easyconsole.cfm/id/2004')
 
         mp_urls = await self.c.gather(map(self.process_multi_page_listing,
                                           listing_urls))
