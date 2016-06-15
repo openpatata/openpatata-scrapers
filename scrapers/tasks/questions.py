@@ -1,17 +1,22 @@
 
+import csv
+from io import StringIO
 import itertools as it
 import logging
+from pathlib import Path
 import re
 
+import jellyfish
 from lxml.html import HtmlElement
 
-from . import _models as models
-from ._name_convert import c14n_name_from_declined
+from ._models import MP, Question
 from ..crawling import Task
-from ..text_utils import (apply_subs, clean_spaces, parse_long_date,
-                          ungarble_qh)
+from ..text_utils import clean_spaces, parse_long_date, ungarble_qh
 
 logger = logging.getLogger(__name__)
+
+with (Path(__file__).parent.parent/'data'/'declined_names.csv').open() as file:
+    NAMES = dict(it.islice(csv.reader(file), 1, None))
 
 
 class Questions(Task):
@@ -43,8 +48,32 @@ class Questions(Task):
             _parse_question(*question)
 
 
-SUBS = (('-Ερώτηση', 'Ερώτηση'), ('Περδίκη Ερώτηση', 'Ερώτηση'),
-        ('φΕρώτηση', 'Ερώτηση'))
+class ReconcileDeclinedNames(Questions):
+
+    def after(output):
+        names_and_ids = {mp['_id']: ' '.join(mp['name']['el'].split()[::-1])
+                         for mp in MP.collection.find()}
+        names = sorted(set(it.chain.from_iterable(
+            RE_NAMES.findall(RE_NAMES_PREPARE.sub('', h.text))
+            for _, h, *_ in output)))
+        output = StringIO()
+        csv_writer = csv.writer(output)
+        csv_writer.writerow(('declined_name', 'id'))
+        csv_writer.writerows(pair_name(n, names_and_ids) for n in names)
+        print(output.getvalue())
+
+
+def pair_name(name, names_and_ids):
+    if name in NAMES:
+        return name, NAMES[name]
+    options = tuple(enumerate(
+        sorted(((jellyfish.jaro_distance(name, new_name), id_)
+                for id_, new_name in names_and_ids.items()), reverse=True)[:5]))
+    _, (_, selection) = options[int(input('''\
+Please choose one of the following for {!r}:
+  {}
+'''.format(name, '\n  '.join(map(repr, options)))) or 0)]
+    return name, selection
 
 
 def extract_questions(url, html):
@@ -57,7 +86,7 @@ def extract_questions(url, html):
     for e in it.chain(html.xpath('//tr//p'),
                       (HtmlElement('Ερώτηση με αρ.'),)):    # Sentinel
         e.text = clean_spaces(e.text_content())
-        norm_text = apply_subs(ungarble_qh(e.text), SUBS)
+        norm_text = ungarble_qh(e.text)
         if norm_text.startswith('Ερώτηση με αρ.'):
             if heading is not None and body:
                 counter += 1
@@ -98,32 +127,33 @@ RE_NAMES = re.compile(r'''({uc}{lc}+
                       re.VERBOSE)
 
 
-def _parse_question(url, heading, body, footer, counter):
-    try:
-        match = RE_HEADING.match(heading.text).groupdict()
-    except AttributeError:
-        logger.error('Unable to parse heading {!r} in {!r}'
-                     .format(heading.text, url))
-        return
-
-    names = RE_NAMES.findall(RE_NAMES_PREPARE.sub('', heading.text))
-    names = (c14n_name_from_declined(name) or logger.warning(
-        'No match found for name {!r} in heading {!r}'
-        ' in {!r}'.format(name, heading.text, url)) for name in names)
-    names = list(filter(None, names))
-
-    answer_links = (e.xpath('.//a/@href') or logger.info(
-        'Unable to extract URL of answer to question with number'
-        ' {!r} in {!r}'.format(match['id'], url)) for e in footer)
+def _extract_answers(url, match, footer):
+    answer_links = (e.xpath('.//a/@href') for e in footer)
     answer_links = it.chain.from_iterable(filter(None, answer_links))
     answer_links = sorted(set(answer_links))
+    if not answer_links:
+        logger.info('Unable to extract URL of answer to question with number'
+                    ' {!r} in {!r}'.format(match['id'], url))
+    return answer_links
 
-    question = models.Question(
-        _position_on_page=counter, _sources=[url],
-        answers=answer_links, by=names, date=parse_long_date(match['date']),
-        heading=heading.text.rstrip('.'), identifier=match['id'],
-        text='\n\n'.join(p.text for p in body).strip())
+
+def _extract_names(url, heading):
+    return [{'mp_id': NAMES[n]}
+             for n in RE_NAMES.findall(RE_NAMES_PREPARE.sub('', heading.text))]
+
+
+def _parse_question(url, heading, body, footer, counter):
+    match = RE_HEADING.match(heading.text).groupdict()
+    question = Question(_position_on_page=counter,
+                        _sources=[url],
+                        answers=_extract_answers(url, match, footer),
+                        by=_extract_names(url, heading),
+                        date=parse_long_date(match['date']),
+                        heading=heading.text.rstrip('.'),
+                        identifier=match['id'],
+                        text='\n\n'.join(p.text for p in body).strip())
     if question.exists:
-        logger.error(repr(question) + ' already exists; skipping')
-        return
-    question.insert()
+        logger.info('Merging question ' + repr(question))
+        question.merge()
+    else:
+        question.insert()

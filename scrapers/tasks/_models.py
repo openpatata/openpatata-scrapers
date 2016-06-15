@@ -116,9 +116,9 @@ class MP(InsertableRecord):
         if not merge:
             yield {'$set': data}
             return
-        wd = next(i for i in data['identifiers']
-                  if i['scheme'] == 'http://www.wikidata.org/entity/')
-        if wd['identifier']:
+        wd = next((i for i in data.get('identifiers', [])
+                   if i['scheme'] == 'http://www.wikidata.org/entity/'), None)
+        if wd and wd['identifier']:
             yield {'$pull': {'identifiers': {'scheme': 'http://www.wikidata.org/entity/'}}}
             data['name'] = (yield)['name']  # We gotta have something to set
         yield {'$set': data,

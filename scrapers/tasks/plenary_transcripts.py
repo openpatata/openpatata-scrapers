@@ -1,18 +1,21 @@
 
 from collections import namedtuple
+import csv
 from datetime import date
+from io import StringIO
 import itertools as it
 import json
 import logging
+from pathlib import Path
 import re
 
 import pandocfilters
 
-from ._models import Bill, PlenarySitting as PS
-from ._name_convert import c14n_name_from_garbled
+from ._models import Bill, MP, PlenarySitting as PS
 from .plenary_agendas import \
     (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
      AgendaItems, extract_parliamentary_period, extract_session)
+from .questions import pair_name
 from ..crawling import Task
 from ..misc_utils import starfilter
 from ..text_utils import \
@@ -20,6 +23,10 @@ from ..text_utils import \
      TableParser)
 
 logger = logging.getLogger(__name__)
+
+with (Path(__file__).parent.parent/'data'/'alternative_names.csv').open() \
+        as file:
+    NAMES = dict(it.islice(csv.reader(file), 1, None))
 
 
 class PlenaryTranscripts(Task):
@@ -53,41 +60,76 @@ class PlenaryTranscripts(Task):
         return url, func, content
 
     def after(output):
-        for transcript in output:
-            _parse_transcript(*transcript)
+        for url, text, heading, date, cap2, bills_and_regs in \
+                filter(None, (_parse_transcript(*t) for t in output)):
+            attendees = filter(None,
+                               map(NAMES.__getitem__,
+                                   _extract_attendees(url, text, heading, date)))
+            plenary_sitting = PS(
+                _sources=[url],
+                agenda=PS.PlenaryAgenda(cap2=cap2),
+                attendees=[{'mp_id:': a} for a in attendees],
+                date=date,
+                links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
+                parliamentary_period_id=extract_parliamentary_period(url, heading),
+                session=extract_session(url, heading),
+                sitting=_extract_sitting(url, heading))
+            try:
+                plenary_sitting.insert(merge=plenary_sitting.exists)
+            except plenary_sitting.InsertError as e:
+                logger.error(e)
+
+            for bill in bills_and_regs:
+                try:
+                    actions = Bill.Submission(plenary_id=plenary_sitting._id,
+                                              sponsors=bill.sponsors,
+                                              committees_referred_to=bill.committees)
+                    actions = [actions]
+                except ValueError:
+                    # Discard likely malformed bills
+                    logger.error('Unable to parse {!r} into a bill'
+                                 .format(bill))
+                    continue
+
+                bill = Bill(_sources=[url], actions=actions, identifier=bill.number,
+                            title=bill.title)
+                try:
+                    bill.insert(merge=bill.exists)
+                except bill.InsertError as e:
+                    logger.error(e)
 
 
-def _extract_attendee_name(url, name):
-    if name.isdigit():
-        return      # Skip page numbers
+class ReconcileAlternativeNames(PlenaryTranscripts):
 
-    new_name = c14n_name_from_garbled(clean_spaces(name, medial_newlines=True))
-    if not new_name:
-        logger.warning('Unable to pair name {!r} with MP on record while'
-                       ' parsing attendee table in {!r}'.format(name, url))
-        return
-    if name != new_name:
-        logger.info('Name {!r} converted to {!r} while parsing'
-                    ' attendee table in {!r}'.format(name, new_name, url))
-    return new_name
+    def after(output):
+        names_and_ids = {i['_id']: i['name']['el'] for i in MP.collection.find()}
+        names = sorted(set(it.chain.from_iterable(
+            _extract_attendees(u, t, h, d)
+            for u, t, h, d, *_ in
+            filter(None, (_parse_transcript(*t) for t in output)))))
+        output = StringIO()
+        csv_writer = csv.writer(output)
+        csv_writer.writerow(('alternative_name', 'id'))
+        csv_writer.writerows(pair_name(n, names_and_ids) for n in names)
+        print(output.getvalue())
 
 
 PRESIDENTS = (((date(2001, 6, 21), date(2007, 12, 19)), 'Χριστόφιας Δημήτρης'),
-              ((date(2008, 3, 20), date(2011, 4, 22)), 'Καρογιάν Μάριος'),
-              ((date(2011, 6, 9), date.today()), 'Ομήρου Γιαννάκης')
-              )
+              ((date(2008, 3, 20), date(2011, 4, 22)), 'Κάρογιαν Μάριος'),
+              ((date(2011, 6,  9), date(2016, 4, 14)), 'Ομήρου Γιαννάκης'),
+              ((date(2016, 6,  9), date.today()), 'Συλλούρης Δημήτρης'),)
 PRESIDENTS = tuple((range(*map(date.toordinal, dates)), {name})
                    for dates, name in PRESIDENTS)
 
 
-def _select_president(date_):
+def _select_president(date):
     match = starfilter((lambda date: lambda date_range, _: date in date_range)
-                       (date2dato(date_).toordinal()), PRESIDENTS)
+                       (date2dato(date).toordinal()), PRESIDENTS)
     try:
         _, name = next(match)
         return name
     except StopIteration:
-        raise ValueError('No President found for {!r}'.format(date_)) from None
+        raise ValueError('No President found for {!r}'.format(date)) from None
 
 
 ATTENDEE_SUBS = (('|', ' '),
@@ -97,8 +139,7 @@ ATTENDEE_SUBS = (('|', ' '),
                  ('Παρόντες αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),
                  ('Αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),  # 2014-10-23
                  ('Περιεχόμενα', '🌯'),
-                 ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),
-                 ('Φακοντής Σοφοκλής', 'Φακοντής Αντρέας'))  # s/e in 2011-12-13
+                 ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),)
 
 
 def _extract_attendees(url, text, heading, date):
@@ -106,18 +147,17 @@ def _extract_attendees(url, text, heading, date):
     # and strip off leading whitespace
     _, _, attendee_table = apply_subs(text, ATTENDEE_SUBS).rpartition('🌮')
     attendee_table, _, _ = attendee_table.partition('🌯')
-    attendee_table = attendee_table.split('\x0c')
     attendee_table = ('\n'.join(l.lstrip() for l in s.splitlines())
-                      for s in attendee_table)
+                      for s in attendee_table.split('\x0c'))
 
-    attendees = set(filter(None, (_extract_attendee_name(url, a)
-                                  for t in attendee_table
-                                  for a in TableParser(t).values)))
+    attendees = set(filter(lambda i: bool(i) and not i.isdigit(),
+                           (clean_spaces(a, medial_newlines=True)
+                            for t in attendee_table
+                            for a in TableParser(t).values)))
     # The President's not listed among the attendees
     if 'ΠΡΟΕΔΡΟΣ:' in heading:
         attendees = attendees | _select_president(date)
-    attendees = sorted(attendees)
-    return attendees
+    return sorted(attendees)
 
 
 RE_SITTING_NUMBER = re.compile(r'Αρ\. (\d+)')
@@ -287,36 +327,4 @@ def _parse_transcript(url, func, content):
                                 ((), ()))
     else:
         cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
-
-    plenary_sitting = PS(
-        _sources=[url],
-        agenda=PS.PlenaryAgenda(cap2=cap2),
-        attendees=_extract_attendees(url, text, heading, date),
-        date=date,
-        links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
-        parliamentary_period_id=extract_parliamentary_period(url, heading),
-        session=extract_session(url, heading),
-        sitting=_extract_sitting(url, heading))
-    try:
-        plenary_sitting.insert(merge=plenary_sitting.exists)
-    except plenary_sitting.InsertError as e:
-        logger.error(e)
-
-    for bill_ in bills_and_regs:
-        try:
-            actions = Bill.Submission(
-                at_plenary_id=plenary_sitting._id,
-                sponsors=bill_.sponsors,
-                committees_referred_to=bill_.committees)
-            actions = [actions]
-        except ValueError:
-            # Discard likely malformed bills
-            logger.error('Unable to parse {!r} into a bill'.format(bill_))
-            continue
-
-        bill = Bill(_sources=[url], actions=actions, identifier=bill_.number,
-                    title=bill_.title)
-        try:
-            bill.insert(merge=bill.exists)
-        except bill.InsertError as e:
-            logger.error(e)
+    return url, text, heading, date, cap2, bills_and_regs

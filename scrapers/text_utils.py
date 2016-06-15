@@ -207,12 +207,12 @@ class _Translit:
 
     translit_slugify = icu.Transliterator.createFromRules(
         'translit_slugify',
-        r'''(.*) > &[^[:alnum:][:whitespace:]] any-remove(
+        r'''(.*) > &[^[:alnum:][:whitespace:]-] any-remove(
                 &any-lower(
                     &Latin-ASCII(
                         &el-Latin($1))));
             :: Null;    # Backtrack
-            [:whitespace:]+ > \-;
+            [[:whitespace:]-]+ > \-;
          ''').transliterate
 
     translit_unaccent_lc = icu.Transliterator.createInstance(
@@ -221,7 +221,7 @@ class _Translit:
     translit_elGrek2Latn = icu.Transliterator.createInstance(
         'Greek-Latin/UNGEGN; Latin-ASCII').transliterate
 
-    with (Path(__file__).parent/'translit'/'Greek-Turkish.xml').open('rb') \
+    with (Path(__file__).parent/'data'/'translit_Greek-Turkish.xml').open('rb') \
             as _file:
         _xml = lxml.etree.fromstring(_file.read())
     translit_el2tr = icu.Transliterator.createFromRules(
@@ -270,13 +270,13 @@ def parse_short_date(
             'Unable to disassemble date in {!r}'.format(date_string)) from None
 
 
-def parse_long_date(
-        date_string, plenary=False,
-        _RE_DATE=re.compile(r'(\d{1,2})(?:[αηή]ς?)? (\w+) (\d{4})'),
-        _EL_MONTHS=dict(zip(map(translit_unaccent_lc,
-                                icu.DateFormatSymbols(icu.Locale('el'))
-                                   .getMonths()), range(1, 13)))
-        ):
+_EL_MONTHS = dict(zip(
+    map(translit_unaccent_lc, icu.DateFormatSymbols(icu.Locale('el')).getMonths()),
+    range(1, 13)))
+
+def parse_long_date(date_string, plenary=False,
+                    _RE_DATE=re.compile(r'(\d{1,2})(?:[αηή]ς?)? (\w+) (\d{4})'),
+                    _EL_MONTHS=_EL_MONTHS):
     """Convert a 'long' date in Greek into an ISO date.
 
     >>> parse_long_date('3 Μαΐου 2014')

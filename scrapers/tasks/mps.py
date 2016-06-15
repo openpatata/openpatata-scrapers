@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class MPs(Task):
 
     async def __call__(self):
-        listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/181',
+        listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/186',
                         'http://www.parliament.cy/easyconsole.cfm/id/2004')
 
         mp_urls = await self.c.gather(map(self.process_multi_page_listing,
@@ -59,7 +59,7 @@ class WikidataIds(Task):
                       if _extract_id(p, 'wikidata'))
         for p in ep_persons:
             wd = Identifier(identifier=_extract_id(p, 'wikidata'),
-                             scheme='http://www.wikidata.org/entity/')
+                            scheme='http://www.wikidata.org/entity/')
             mp = MP(_id=_extract_id(p, 'openpatata'), identifiers=[wd])
             logger.info('Updating identifiers of {!r} with {!r}'
                         .format(mp._id, mp.data['identifiers']))
