@@ -3,7 +3,7 @@ import itertools as it
 import json
 import logging
 
-from ._models import Identifier, MP, MultilingualField, OtherName
+from ._models import ContactDetails, Identifier, MP, MultilingualField, OtherName
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
@@ -44,7 +44,7 @@ class MPs(Task):
 
     def after(output):
         for url, html_el, html_en in output:
-            _parse_mp(url, html_el, html_en)
+            parse_mp(url, html_el, html_en)
 
 
 class WikidataIds(Task):
@@ -56,17 +56,17 @@ class WikidataIds(Task):
 
     def after(ep_data):
         ep_persons = (p for p in json.loads(ep_data.decode())['persons']
-                      if _extract_id(p, 'wikidata'))
+                      if extract_id(p, 'wikidata'))
         for p in ep_persons:
-            wd = Identifier(identifier=_extract_id(p, 'wikidata'),
+            wd = Identifier(identifier=extract_id(p, 'wikidata'),
                             scheme='http://www.wikidata.org/entity/')
-            mp = MP(_id=_extract_id(p, 'openpatata'), identifiers=[wd])
+            mp = MP(_id=extract_id(p, 'openpatata'), identifiers=[wd])
             logger.info('Updating identifiers of {!r} with {!r}'
                         .format(mp._id, mp.data['identifiers']))
             mp.insert(merge=mp.exists)
 
 
-def _extract_id(person, scheme):
+def extract_id(person, scheme):
     return next((i for i in person['identifiers'] if i['scheme'] == scheme),
                 {}).get('identifier')
 
@@ -88,7 +88,7 @@ LABELS = {
         'studies': 'Studies',}}
 
 
-def _extract_item(el, en):
+def extract_item(el, en):
     html = locals()
 
     def inner(lang, *items):
@@ -100,11 +100,11 @@ def _extract_item(el, en):
     return inner
 
 
-def _extract_birth_date_place(url, html):
-    extract_item = _extract_item(html, None)
+def extract_birth_date_place(url, html):
+    extractor = extract_item(html, None)
     birth_date, birth_place = None, None
     try:
-        birth_things = next(extract_item('el', 'poo dob', 'pob dob', 'poo'))
+        birth_things = next(extractor('el', 'poo dob', 'pob dob', 'poo'))
     except StopIteration:
         logger.error('No date and place of birth found in ' + repr(url))
     else:
@@ -120,7 +120,7 @@ def _extract_birth_date_place(url, html):
     return birth_date, birth_place
 
 
-def _extract_contact_details(url, lang, html):
+def extract_contact_details(url, lang, html):
     heading = {'el': 'Στοιχεία επικοινωνίας', 'en': 'Contact info'}[lang]
     try:
         contact_details = next(iter(html.xpath(
@@ -142,26 +142,38 @@ def _extract_contact_details(url, lang, html):
         return contact_details
 
 
-def _extract_images(html):
-    images = html.xpath('//a[contains(@href, "/assets/image/imageoriginal")]'
-                        '/@href')
+def extract_images(html):
+    images = tuple(it.chain(html.xpath('//a[@class = "lightview"]/@href'),
+                            html.xpath('//a[contains(@href, "/assets/image/imageoriginal")]'
+                                       '/@href')))
     images = sorted(set(images), key=images.index)
     return images
 
 
-def _parse_mp(url, html_el, html_en):
+def parse_mp(url, html_el, html_en):
+    extractor = extract_contact_details(url, 'el', html_el)
+    contact_details = []
+    email = extractor.get('Ηλεκτρονικό ταχυδρομείο')
+    if email:
+        contact_details = email.split(', ')
+        email = contact_details[0]
+        contact_details = [ContactDetails(type='email', value=v)
+                           for v in contact_details]
+    images = extract_images(html_el)
     name = clean_spaces(html_el.xpath('string(//h1)'))
-    mp = MP(
-        _sources=[url],
-        birth_date=_extract_birth_date_place(url, html_el)[0],
-        images=_extract_images(html_el),
-        name=MultilingualField(el=name,
-                               en=translit_elGrek2Latn(name),
-                               tr=translit_el2tr(name)),
-        other_names=[OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
-                               note="Official spelling in the 'en' locale;"
-                                    " possibly anglicised")])
-    try:
-        mp.insert(merge=mp.exists)
-    except mp.InsertError as e:
-        logger.error(e)
+    name = MultilingualField(el=name,
+                             en=translit_elGrek2Latn(name),
+                             tr=translit_el2tr(name))
+    other_names = [OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
+                             note="Official spelling in the 'en' locale;"
+                                  " possibly anglicised")]
+
+    mp = MP(_sources=[url],
+            birth_date=extract_birth_date_place(url, html_el)[0],
+            contact_details=contact_details,
+            email=email,
+            image=[*images, None][0],
+            images=images,
+            name=name,
+            other_names=other_names)
+    mp.insert(merge=mp.exists)

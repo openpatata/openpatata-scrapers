@@ -72,6 +72,12 @@ class CommitteeReport(InsertableRecord):
         yield {'$set': data}
 
 
+class ContactDetails(SubRecord):
+
+    template = {'type': None, 'value': None}
+    required_properties = ('type', 'value')
+
+
 class ElectoralDistrict(InsertableRecord):
 
     collection = default_db.electoral_districts
@@ -95,6 +101,7 @@ class MP(InsertableRecord):
     collection = default_db.mps
     template = {'_sources': [],
                 'birth_date': None,
+                'contact_details': [],
                 'email': None,
                 'gender': None,
                 'identifiers': [],
@@ -123,8 +130,9 @@ class MP(InsertableRecord):
             data['name'] = (yield)['name']  # We gotta have something to set
         yield {'$set': data,
                '$addToSet': {k: {'$each': data.pop(k, [])}
-                             for k in ('_sources', 'identifiers', 'images',
-                                       'links', 'other_names', 'tenures')}}
+                             for k in ('_sources', 'contact_details',
+                                       'identifiers', 'images', 'links',
+                                       'other_names', 'tenures')}}
         data = yield
         if sum(1 for i in data['identifiers']
                if i['scheme'] == 'http://www.wikidata.org/entity/') > 1:
