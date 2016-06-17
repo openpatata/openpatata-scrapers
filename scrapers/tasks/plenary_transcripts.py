@@ -68,7 +68,7 @@ class PlenaryTranscripts(Task):
             plenary_sitting = PS(
                 _sources=[url],
                 agenda=PS.PlenaryAgenda(cap2=cap2),
-                attendees=[{'mp_id:': a} for a in attendees],
+                attendees=[{'mp_id': a} for a in attendees],
                 date=date,
                 links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
                 parliamentary_period_id=extract_parliamentary_period(url, heading),
