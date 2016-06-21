@@ -127,12 +127,13 @@ class MP(InsertableRecord):
                    if i['scheme'] == 'http://www.wikidata.org/entity/'), None)
         if wd and wd['identifier']:
             yield {'$pull': {'identifiers': {'scheme': 'http://www.wikidata.org/entity/'}}}
-            data['name'] = (yield)['name']  # We gotta have something to set
-        yield {'$set': data,
-               '$addToSet': {k: {'$each': data.pop(k, [])}
-                             for k in ('_sources', 'contact_details',
-                                       'identifiers', 'images', 'links',
-                                       'other_names', 'tenures')}}
+            _ = yield
+        new_data = {'$addToSet': {k: {'$each': data.pop(k, [])}
+                                  for k, v in self.template.items()
+                                  if isinstance(v, list)}}
+        if next(filter(None, data.values()), None):
+            new_data = {**new_data, '$set': data}
+        yield new_data
         data = yield
         if sum(1 for i in data['identifiers']
                if i['scheme'] == 'http://www.wikidata.org/entity/') > 1:

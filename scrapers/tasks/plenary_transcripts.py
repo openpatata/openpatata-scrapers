@@ -24,7 +24,7 @@ from ..text_utils import \
 
 logger = logging.getLogger(__name__)
 
-with (Path(__file__).parent.parent/'data'/'alternative_names.csv').open() \
+with (Path(__file__).parent.parent/'data'/'attendance_names.csv').open() \
         as file:
     NAMES = dict(it.islice(csv.reader(file), 1, None))
 
@@ -99,7 +99,7 @@ class PlenaryTranscripts(Task):
                     logger.error(e)
 
 
-class ReconcileAlternativeNames(PlenaryTranscripts):
+class ReconcileAttendanceNames(PlenaryTranscripts):
 
     def after(output):
         names_and_ids = {i['_id']: i['name']['el'] for i in MP.collection.find()}
@@ -109,8 +109,8 @@ class ReconcileAlternativeNames(PlenaryTranscripts):
             filter(None, (_parse_transcript(*t) for t in output)))))
         output = StringIO()
         csv_writer = csv.writer(output)
-        csv_writer.writerow(('alternative_name', 'id'))
-        csv_writer.writerows(pair_name(n, names_and_ids) for n in names)
+        csv_writer.writerow(('name', 'id'))
+        csv_writer.writerows(pair_name(n, names_and_ids, NAMES) for n in names)
         print(output.getvalue())
 
 

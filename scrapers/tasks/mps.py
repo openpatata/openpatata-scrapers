@@ -1,9 +1,13 @@
 
+import csv
+from io import StringIO
 import itertools as it
 import json
 import logging
+from pathlib import Path
 
 from ._models import ContactDetails, Identifier, MP, MultilingualField, OtherName
+from .questions import pair_name
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
@@ -69,6 +73,53 @@ class WikidataIds(Task):
 def extract_id(person, scheme):
     return next((i for i in person['identifiers'] if i['scheme'] == scheme),
                 {}).get('identifier')
+
+
+class ContactInfo(Task):
+
+    with (Path(__file__).parent.parent/'data'/'contact_names.csv').open() \
+            as file:
+        NAMES = dict(it.islice(csv.reader(file), 1, None))
+
+    async def __call__(self):
+        url = 'http://www.parliament.cy/easyconsole.cfm/id/185'
+        return await self.c.get_html(url)
+
+    def after(output):
+        for mp_name, _, phone_number, email in extract_contact_rows(output):
+            if not ContactInfo.NAMES.get(mp_name):
+                logger.warning('{!r} not found in `NAMES`; skipping'
+                               .format(mp_name))
+                continue
+            mp = MP(_id=ContactInfo.NAMES[mp_name],
+                    contact_details=[ContactDetails(type='email', value=email),
+                                     ContactDetails(type='voice', value=phone_number)],
+                    email=email)
+            try:
+                mp.insert(mp.exists)
+            except mp.InsertError:
+                logger.warning('Unable to insert ' + repr(mp))
+
+
+class ReconcileContactNames(ContactInfo):
+
+    def after(output):
+        names_and_ids = {i['_id']: i['name']['el'] for i in MP.collection.find()}
+        names = tuple(r[0] for r in extract_contact_rows(output))
+        output = StringIO()
+        csv_writer = csv.writer(output)
+        csv_writer.writerow(('name', 'id'))
+        csv_writer.writerows(pair_name(n, names_and_ids, ContactInfo.NAMES)
+                             for n in names)
+        print(output.getvalue())
+
+
+def extract_contact_rows(rows):
+    rows = rows.xpath('//div[@class = "articleBox"]/div[2]/table[1]//tr')
+    rows = (tuple(clean_spaces(cell.text_content()) for cell in row)
+            for row in rows)
+    rows = (row[1:] for row in rows if row[0].isnumeric())
+    return rows
 
 
 LABELS = {

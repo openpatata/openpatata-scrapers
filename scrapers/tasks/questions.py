@@ -15,7 +15,7 @@ from ..text_utils import clean_spaces, parse_long_date, ungarble_qh
 
 logger = logging.getLogger(__name__)
 
-with (Path(__file__).parent.parent/'data'/'declined_names.csv').open() as file:
+with (Path(__file__).parent.parent/'data'/'question_names.csv').open() as file:
     NAMES = dict(it.islice(csv.reader(file), 1, None))
 
 
@@ -48,7 +48,7 @@ class Questions(Task):
             _parse_question(*question)
 
 
-class ReconcileDeclinedNames(Questions):
+class ReconcileQuestionNames(Questions):
 
     def after(output):
         names_and_ids = {mp['_id']: ' '.join(mp['name']['el'].split()[::-1])
@@ -58,16 +58,16 @@ class ReconcileDeclinedNames(Questions):
             for _, h, *_ in output)))
         output = StringIO()
         csv_writer = csv.writer(output)
-        csv_writer.writerow(('declined_name', 'id'))
-        csv_writer.writerows(pair_name(n, names_and_ids) for n in names)
+        csv_writer.writerow(('name', 'id'))
+        csv_writer.writerows(pair_name(n, names_and_ids, NAMES) for n in names)
         print(output.getvalue())
 
 
-def pair_name(name, names_and_ids):
-    if name in NAMES:
-        return name, NAMES[name]
+def pair_name(name, names_and_ids, existing_names):
+    if name in existing_names:
+        return name, existing_names[name]
     options = tuple(enumerate(
-        sorted(((jellyfish.jaro_distance(name, new_name), id_)
+        sorted(((jellyfish.jaro_distance(name.lower(), new_name.lower()), id_)
                 for id_, new_name in names_and_ids.items()), reverse=True)[:5]))
     _, (_, selection) = options[int(input('''\
 Please choose one of the following for {!r}:
