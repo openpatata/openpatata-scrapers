@@ -6,7 +6,8 @@ import json
 import logging
 from pathlib import Path
 
-from ._models import ContactDetails, Identifier, MP, MultilingualField, OtherName
+from ._models import (ContactDetails, Identifier, Link,
+                      MP, MultilingualField, OtherName)
 from .questions import pair_name
 from ..crawling import Task
 from ..text_utils import (clean_spaces, parse_long_date,
@@ -24,11 +25,10 @@ class MPs(Task):
         mp_urls = await self.c.gather(map(self.process_multi_page_listing,
                                           listing_urls))
         mp_urls = tuple(it.chain.from_iterable(mp_urls))
-        return zip(mp_urls,
-                   await self.c.gather(self.c.get_html(url + '/lang/el')
-                                       for url in mp_urls),
-                   await self.c.gather(self.c.get_html(url + '/lang/en')
-                                       for url in mp_urls))
+        return zip(
+            mp_urls,
+            await self.c.gather(self.c.get_html(u + '/lang/el') for u in mp_urls),
+            await self.c.gather(self.c.get_html(u + '/lang/en') for u in mp_urls))
 
     async def process_multi_page_listing(self, url):
         html = await self.c.get_html(url)
@@ -48,7 +48,34 @@ class MPs(Task):
 
     def after(output):
         for url, html_el, html_en in output:
-            parse_mp(url, html_el, html_en)
+            extractor = extract_contact_details(url, 'el', html_el)
+            contact_details = [ContactDetails(type=t, value=f(i))
+                                for l, t, d, f in CONTACT_DETAIL_SUBS
+                                if extractor.get(l)
+                                for i in extractor[l].split(d)]
+            email = next((i['value'] for i in contact_details if i['type'] == 'email'),
+                         None)
+            images = extract_images(html_el)
+            links = [Link(note=MultilingualField(**n), url=f(extractor[l], html_el))
+                                for l, n, d, f in LINK_SUBS if extractor.get(l)
+                                for i in extractor[l].split(d)]
+            name = clean_spaces(html_el.xpath('string(//h1)'))
+            name = MultilingualField(el=name, en=translit_elGrek2Latn(name),
+                                     tr=translit_el2tr(name))
+            other_names = [OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
+                                     note="Official spelling in the 'en' locale;"
+                                          " possibly anglicised")]
+
+            mp = MP(_sources=[url],
+                    birth_date=extract_birth_date_place(url, html_el)[0],
+                    contact_details=contact_details,
+                    email=email,
+                    image=[*images, None][0],
+                    images=images,
+                    links=links,
+                    name=name,
+                    other_names=other_names)
+            mp.insert(merge=mp.exists)
 
 
 class WikidataIds(Task):
@@ -204,30 +231,27 @@ def extract_images(html):
     return images
 
 
-def parse_mp(url, html_el, html_en):
-    extractor = extract_contact_details(url, 'el', html_el)
-    contact_details = []
-    email = extractor.get('Ηλεκτρονικό ταχυδρομείο')
-    if email:
-        contact_details = email.split(', ')
-        email = contact_details[0]
-        contact_details = [ContactDetails(type='email', value=v)
-                           for v in contact_details]
-    images = extract_images(html_el)
-    name = clean_spaces(html_el.xpath('string(//h1)'))
-    name = MultilingualField(el=name,
-                             en=translit_elGrek2Latn(name),
-                             tr=translit_el2tr(name))
-    other_names = [OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
-                             note="Official spelling in the 'en' locale;"
-                                  " possibly anglicised")]
+def extract_homepage(url, html):
+    try:
+        return html.xpath('//a[contains(string(.), "{}")]/@href'.format(url))[0]
+    except IndexError:
+        if url.startswith('http'):
+            return url
+        return 'http://{}/'.format(url.rstrip('/'))
 
-    mp = MP(_sources=[url],
-            birth_date=extract_birth_date_place(url, html_el)[0],
-            contact_details=contact_details,
-            email=email,
-            image=[*images, None][0],
-            images=images,
-            name=name,
-            other_names=other_names)
-    mp.insert(merge=mp.exists)
+
+CONTACT_DETAIL_SUBS = (
+    ('Διεύθυνση', 'address', ' / ', lambda v: v),
+    ('Τηλέφωνο', 'voice', ', ', lambda v: '(+357) ' + v.replace('(+357) ', '')),
+    ('Τηλεομοιότυπο', 'fax', ', ', lambda v: '(+357) ' + v.replace('(+357) ', '')),
+    ('Ηλεκτρονικό ταχυδρομείο', 'email', ', ', lambda v: v),)
+
+LINK_SUBS = (
+    ('Διαδικτυακός τόπος',
+     {'el': 'Προσωπική ιστοσελίδα', 'en': 'Personal website', 'tr': 'Kişisel websitesi'},
+     ', ',
+     extract_homepage),
+    ('Λογαριασμός στο Twitter',
+     {'el': 'twitter', 'en': 'twitter', 'tr': 'twitter'},
+     ', ',
+     lambda v, _: 'https://twitter.com/' + v.lstrip('@')),)
