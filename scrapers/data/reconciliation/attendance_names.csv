@@ -1,6 +1,4 @@
 name,id
------------------------,
-----------------------------,
 Αδάμος Αδάμου,adamou-adamos
 Αδάμου Αδάμος,adamou-adamos
 Αναστασιάδης Νίκος,anastasiadis-nikos
@@ -16,7 +14,6 @@ name,id
 Δημητρίου Μισιαούλη Στέλλα,dimitriou-misiaouli-stella
 Ευαγόρου Σταύρος,evagorou-stavros
 Ζαχαρίου Ζαχαρίας,zachariou-zacharias
-Η συνεδρία πραγματοποιήθηκε την,
 Θεμιστοκλέους Ανδρέας,themistokleous-andreas
 Καρογιάν Μάριος,karogian-marios
 Κατσουρίδης Νίκος,katsouridis-nikos
@@ -63,7 +60,6 @@ name,id
 Τάσου Γεώργιος,tasou-georgios
 Τζιοβάνης Χριστάκης,tziovanis-christakis
 Τορναρίτης Νίκος,tornaritis-nikos
-"Τρίτη, 23 Σεπτεμβρίου 2014.",
 Φακοντής Αντρέας,fakontis-antreas
 Φακοντής Σοφοκλής,fakontis-antreas
 Φυττής Σοφοκλής,fyttis-sofoklis
@@ -72,4 +68,3 @@ name,id
 Χαραλαμπίδου Ειρήνη,charalampidou-eirini
 Χατζηγιάννης Κυριάκος,chatzigiannis-kyriakos
 Χριστοφόρου Λευτέρης,christoforou-lefteris
-∗,

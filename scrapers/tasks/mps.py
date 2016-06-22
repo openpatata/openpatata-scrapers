@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 class MPs(Task):
 
-    with (Path(__file__).parent.parent/'data'/'profile_names.csv').open() \
-            as file:
+    with (Path(__file__).parent.parent
+          /'data'/'reconciliation'/'profile_names.csv').open() as file:
         NAMES = dict(it.islice(csv.reader(file), 1, None))
 
     async def __call__(self):
@@ -123,8 +123,8 @@ def extract_id(person, scheme):
 
 class ContactInfo(Task):
 
-    with (Path(__file__).parent.parent/'data'/'contact_names.csv').open() \
-            as file:
+    with (Path(__file__).parent.parent
+          /'data'/'reconciliation'/'contact_names.csv').open() as file:
         NAMES = dict(it.islice(csv.reader(file), 1, None))
 
     async def __call__(self):

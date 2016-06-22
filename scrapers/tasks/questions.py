@@ -15,7 +15,8 @@ from ..text_utils import clean_spaces, parse_long_date, ungarble_qh
 
 logger = logging.getLogger(__name__)
 
-with (Path(__file__).parent.parent/'data'/'question_names.csv').open() as file:
+with (Path(__file__).parent.parent
+      /'data'/'reconciliation'/'question_names.csv').open() as file:
     NAMES = dict(it.islice(csv.reader(file), 1, None))
 
 

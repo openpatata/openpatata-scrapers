@@ -24,8 +24,8 @@ from ..text_utils import \
 
 logger = logging.getLogger(__name__)
 
-with (Path(__file__).parent.parent/'data'/'attendance_names.csv').open() \
-        as file:
+with (Path(__file__).parent.parent
+      /'data'/'reconciliation'/'attendance_names.csv').open() as file:
     NAMES = dict(it.islice(csv.reader(file), 1, None))
 
 
