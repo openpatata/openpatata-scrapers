@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 class MPs(Task):
 
+    with (Path(__file__).parent.parent/'data'/'profile_names.csv').open() \
+            as file:
+        NAMES = dict(it.islice(csv.reader(file), 1, None))
+
     async def __call__(self):
         listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/186',
                         'http://www.parliament.cy/easyconsole.cfm/id/2004')
@@ -66,7 +70,8 @@ class MPs(Task):
                                      note="Official spelling in the 'en' locale;"
                                           " possibly anglicised")]
 
-            mp = MP(_sources=[url],
+            mp = MP(_id=MPs.NAMES.get(name['el']),
+                    _sources=[url],
                     birth_date=extract_birth_date_place(url, html_el)[0],
                     contact_details=contact_details,
                     email=email,
@@ -76,6 +81,20 @@ class MPs(Task):
                     name=name,
                     other_names=other_names)
             mp.insert(merge=mp.exists)
+
+
+class ReconcileProfileNames(MPs):
+
+    def after(output):
+        names_and_ids = {i['_id']: i['name']['el'] for i in MP.collection.find()}
+        names = tuple(clean_spaces(h.xpath('string(//h1)'))
+                      for _, h, _ in output)
+        output = StringIO()
+        csv_writer = csv.writer(output)
+        csv_writer.writerow(('name', 'id'))
+        csv_writer.writerows(pair_name(n, names_and_ids, MPs.NAMES)
+                             for n in names)
+        print(output.getvalue())
 
 
 class WikidataIds(Task):
@@ -233,8 +252,10 @@ def extract_images(html):
 
 def extract_homepage(url, html):
     try:
-        return html.xpath('//a[contains(string(.), "{}")]/@href'.format(url))[0]
-    except IndexError:
+        url, = html.xpath('//a[contains(string(.), "{}")]/@href'.format(url))
+        url = url.rstrip('/') + '/'
+        return url
+    except ValueError:
         if url.startswith('http'):
             return url
         return 'http://{}/'.format(url.rstrip('/'))
