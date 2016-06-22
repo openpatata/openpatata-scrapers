@@ -86,14 +86,17 @@ class ContactInfo(Task):
         return await self.c.get_html(url)
 
     def after(output):
-        for mp_name, _, phone_number, email in extract_contact_rows(output):
+        for mp_name, _, voice, email in extract_contact_rows(output):
             if not ContactInfo.NAMES.get(mp_name):
                 logger.warning('{!r} not found in `NAMES`; skipping'
                                .format(mp_name))
                 continue
+            voice = ''.join(voice.split())
+            voice = '(+357) {} {}'.format(voice[:2], voice[2:])
             mp = MP(_id=ContactInfo.NAMES[mp_name],
+                    _sources=['http://www.parliament.cy/easyconsole.cfm/id/185'],
                     contact_details=[ContactDetails(type='email', value=email),
-                                     ContactDetails(type='voice', value=phone_number)],
+                                     ContactDetails(type='voice', value=voice)],
                     email=email)
             try:
                 mp.insert(mp.exists)
