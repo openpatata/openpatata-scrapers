@@ -158,8 +158,8 @@ def extract_id_and_title(url, item):
                        .format((id_, title), url))
 
 
-RE_PPERIOD = re.compile(r'_?(\w+?)[\'΄´] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
-RE_SESSION = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'΄´]')
+RE_PPERIOD = re.compile(r'_?(\w+?)[\'’΄´] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
+RE_SESSION = re.compile(r'ΣΥΝΟ[Δ∆]ΟΣ (\w+)[\'’΄´]')
 RE_SITTING_NUMBER = re.compile(r'(\d+)[ηή] ?συνεδρίαση')
 
 

@@ -1,7 +1,7 @@
 
 from collections import namedtuple
 import csv
-from datetime import date
+import datetime as dt
 from io import StringIO
 import itertools as it
 import json
@@ -121,15 +121,22 @@ class ReconcileAttendanceNames(PlenaryTranscripts):
         print(output.getvalue())
 
 
-PRESIDENTS = (((date(2001, 6, 21), date(2007, 12, 19)), 'Χριστόφιας Δημήτρης'),
-              ((date(2008, 3, 20), date(2011,  4, 22)), 'Κάρογιαν Μάριος'),
-              ((date(2011, 6,  9), date(2016,  4, 14)), 'Ομήρου Γιαννάκης'),
-              ((date(2016, 6,  9), date.today()), 'Συλλούρης Δημήτρης'),)
-PRESIDENTS = tuple((range(*map(date.toordinal, dates)), {name})
+# http://www.parliament.cy/easyconsole.cfm/id/194
+PRESIDENTS = ((((1991, 5, 30), (1996,  5, 26)),  'Γαλανός Αλέξης'),
+              (((1996, 6,  6), (2001, 12, 19)),  'Κυπριανού Σπύρος'),
+              (((2001, 6,  7), (2008,  2, 28)),  'Χριστόφιας Δημήτρης'),
+              (((2008, 3,  6), (2011,  4, 22)),  'Κάρογιαν Μάριος'),
+              (((2011, 6,  2), (2016,  4, 14)),  'Ομήρου Γιαννάκης'),
+              (((2016, 6,  8), dt.date.today()), 'Συλλούρης Δημήτρης'),)
+PRESIDENTS = tuple(((dt.date(*s) + dt.timedelta(days=1),
+                     dt.date(*e) if isinstance(e, tuple) else e),
+                    {name})
+                   for (s, e), name in PRESIDENTS)
+PRESIDENTS = tuple((range(*map(dt.date.toordinal, dates)), name)
                    for dates, name in PRESIDENTS)
 
 
-def _select_president(date):
+def select_president(date):
     match = starfilter((lambda date: lambda date_range, _: date in date_range)
                        (date2dato(date).toordinal()), PRESIDENTS)
     try:
@@ -157,6 +164,8 @@ ATTENDEE_SUBS = (('|', ' '),
 
 
 def extract_attendees(url, text, heading, date):
+    if 'praktiko2002-07.04parartima.doc' in url:
+        return ()
     # Split at page breaks 'cause the columns will have likely shifted
     # and strip off leading whitespace
     _, _, attendee_table = apply_subs(text, ATTENDEE_SUBS).rpartition('🌮')
@@ -170,7 +179,7 @@ def extract_attendees(url, text, heading, date):
                             for a in TableParser(t).values)))
     # The President's not listed among the attendees
     if 'ΠΡΟΕΔΡΟΣ:' in heading:
-        attendees = attendees | _select_president(date)
+        attendees = attendees | select_president(date)
     return sorted(attendees)
 
 
@@ -326,8 +335,8 @@ def parse_transcript(url, func, content):
     else:
         text = content
 
-    heading, _, _ = text.partition('(')
-    heading = clean_spaces(heading, medial_newlines=True)
+    heading = clean_spaces(text[:(text.find('ΠΡΟΕΔΡ') + 9)],
+                           medial_newlines=True)
     try:
         date = parse_long_date(heading)
     except ValueError as e:
