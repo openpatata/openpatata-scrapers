@@ -2,15 +2,12 @@
 from collections import defaultdict, namedtuple
 import functools as ft
 import itertools as it
-import logging
 import re
 
 from ..crawling import Task
 from ..models import Bill, PlenarySitting as PS
 from ..text_utils import (clean_spaces, parse_long_date, TableParser,
                           ungarble_qh)
-
-logger = logging.getLogger(__name__)
 
 
 class PlenaryAgendas(Task):

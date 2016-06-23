@@ -3,7 +3,6 @@ import csv
 from io import StringIO
 import itertools as it
 import json
-import logging
 from pathlib import Path
 
 from ..crawling import Task
@@ -12,8 +11,6 @@ from ..models import (ContactDetails, Identifier, Link,
 from ..reconciliation import pair_name
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
-
-logger = logging.getLogger(__name__)
 
 
 class MPs(Task):

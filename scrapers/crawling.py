@@ -2,9 +2,11 @@
 """Crawling classes."""
 
 import asyncio
+import builtins
 from collections import namedtuple
 import datetime as dt
 import functools
+import logging
 from pathlib import Path
 
 from aiohttp import ClientSession, TCPConnector
@@ -137,6 +139,7 @@ class Task:
     """A scraping task primitive."""
 
     def __init__(self, crawler):
+        builtins.logger = logging.getLogger(self.__class__.__name__)
         self.crawler = self.c = crawler
 
     def after(output):

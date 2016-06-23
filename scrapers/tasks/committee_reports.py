@@ -1,12 +1,9 @@
 
 import itertools as it
-import logging
 
 from ..crawling import Task
 from ..models import CommitteeReport
 from ..text_utils import clean_spaces, parse_short_date
-
-logger = logging.getLogger(__name__)
 
 
 class CommitteeReports(Task):

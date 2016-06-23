@@ -2,7 +2,6 @@
 import csv
 from io import StringIO
 import itertools as it
-import logging
 from pathlib import Path
 import re
 
@@ -12,8 +11,6 @@ from ..crawling import Task
 from ..models import MP, Question
 from ..reconciliation import pair_name
 from ..text_utils import clean_spaces, parse_long_date, ungarble_qh
-
-logger = logging.getLogger(__name__)
 
 with (Path(__file__).parent.parent
       /'data'/'reconciliation'/'question_names.csv').open() as file:

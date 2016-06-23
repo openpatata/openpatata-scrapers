@@ -5,7 +5,6 @@ from datetime import date
 from io import StringIO
 import itertools as it
 import json
-import logging
 from pathlib import Path
 import re
 
@@ -21,8 +20,6 @@ from ..reconciliation import pair_name
 from ..text_utils import \
     (apply_subs, clean_spaces, date2dato, pandoc_json_to, parse_long_date,
      TableParser)
-
-logger = logging.getLogger(__name__)
 
 with (Path(__file__).parent.parent
       /'data'/'reconciliation'/'attendance_names.csv').open() as file:
