@@ -117,8 +117,9 @@ class WikidataIds(Task):
 
 
 def extract_id(person, scheme):
-    return next((i for i in person['identifiers'] if i['scheme'] == scheme),
-                {}).get('identifier')
+    return next((i['identifier']
+                 for i in person['identifiers'] if i['scheme'] == scheme),
+                None)
 
 
 class ContactInfo(Task):

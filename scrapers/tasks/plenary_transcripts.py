@@ -33,14 +33,29 @@ class PlenaryTranscripts(Task):
     """Extract MPs in attendance at plenary sittings from transcripts."""
 
     async def process_transcript_listings(self):
-        listing_urls = (
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IA.htm',
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IB.htm',
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IES.htm',
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IC.htm',
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IDS.htm',
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_ID.htm',
-            'http://www2.parliament.cy/parliamentgr/008_01_01/008_01_IE.htm')
+        listing_urls = ('http://www2.parliament.cy/parliamentgr/008_01_01/' + v
+                        for v in ('008_01_IE.htm',
+                                  '008_01_ID.htm',
+                                  '008_01_IDS.htm',
+                                  '008_01_IC.htm',
+                                  '008_01_IES.htm',
+                                  '008_01_IB.htm',
+                                  '008_01_IA.htm',
+                                #   '008_01_TES.htm',
+                                  '008_01_TE.htm',
+                                  '008_01_TD.htm',
+                                  '008_01_TC.htm',
+                                  '008_01_TB.htm',
+                                  '008_01_TA.htm',
+                                  '008_01_HES.htm',
+                                  '008_01_HE.htm',
+                                  '008_01_HD.htm',
+                                  '008_01_HC.htm',
+                                  '008_01_HB.htm',
+                                  '008_01_HA.htm',
+                                  '008_01_ZES.htm',
+                                  '008_01_ZE.htm',
+                                  '008_01_ZD.htm',))
 
         transcript_urls = \
             await self.c.gather({self.process_transcript_listing(url)
@@ -60,26 +75,24 @@ class PlenaryTranscripts(Task):
         return url, func, content
 
     def after(output):
-        for url, text, heading, date, cap2, bills_and_regs in \
-                filter(None, (_parse_transcript(*t) for t in output)):
+        for url, text, heading, date, cap2, bills in \
+                filter(None, (parse_transcript(*t) for t in output)):
             attendees = filter(None,
-                               map(NAMES.__getitem__,
-                                   _extract_attendees(url, text, heading, date)))
-            plenary_sitting = PS(
-                _sources=[url],
-                agenda=PS.PlenaryAgenda(cap2=cap2),
-                attendees=[{'mp_id': a} for a in attendees],
-                date=date,
-                links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
-                parliamentary_period_id=extract_parliamentary_period(url, heading),
-                session=extract_session(url, heading),
-                sitting=_extract_sitting(url, heading))
-            try:
-                plenary_sitting.insert(merge=plenary_sitting.exists)
-            except plenary_sitting.InsertError as e:
-                logger.error(e)
+                               map(lambda v: NAMES.get(v) or
+                                    logger.error('No match found for ' + repr(v)),
+                                   extract_attendees(url, text, heading, date)))
+            plenary_sitting = \
+                PS(_sources=[url],
+                   agenda=PS.PlenaryAgenda(cap2=cap2),
+                   attendees=[{'mp_id': a} for a in attendees],
+                   date=date,
+                   links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
+                   parliamentary_period_id=extract_parliamentary_period(url, heading),
+                   session=extract_session(url, heading),
+                   sitting=extract_sitting(url, heading))
+            plenary_sitting.insert(merge=plenary_sitting.exists)
 
-            for bill in bills_and_regs:
+            for bill in bills:
                 try:
                     actions = Bill.Submission(plenary_id=plenary_sitting._id,
                                               sponsors=bill.sponsors,
@@ -91,12 +104,9 @@ class PlenaryTranscripts(Task):
                                  .format(bill))
                     continue
 
-                bill = Bill(_sources=[url], actions=actions, identifier=bill.number,
-                            title=bill.title)
-                try:
-                    bill.insert(merge=bill.exists)
-                except bill.InsertError as e:
-                    logger.error(e)
+                bill = Bill(_sources=[url], actions=actions,
+                            identifier=bill.number, title=bill.title)
+                bill.insert(merge=bill.exists)
 
 
 class ReconcileAttendanceNames(PlenaryTranscripts):
@@ -104,9 +114,9 @@ class ReconcileAttendanceNames(PlenaryTranscripts):
     def after(output):
         names_and_ids = {i['_id']: i['name']['el'] for i in MP.collection.find()}
         names = sorted(set(it.chain.from_iterable(
-            _extract_attendees(u, t, h, d)
+            extract_attendees(u, t, h, d)
             for u, t, h, d, *_ in
-            filter(None, (_parse_transcript(*t) for t in output)))))
+            filter(None, (parse_transcript(*t) for t in output)))))
         output = StringIO()
         csv_writer = csv.writer(output)
         csv_writer.writerow(('name', 'id'))
@@ -115,8 +125,8 @@ class ReconcileAttendanceNames(PlenaryTranscripts):
 
 
 PRESIDENTS = (((date(2001, 6, 21), date(2007, 12, 19)), 'Χριστόφιας Δημήτρης'),
-              ((date(2008, 3, 20), date(2011, 4, 22)), 'Κάρογιαν Μάριος'),
-              ((date(2011, 6,  9), date(2016, 4, 14)), 'Ομήρου Γιαννάκης'),
+              ((date(2008, 3, 20), date(2011,  4, 22)), 'Κάρογιαν Μάριος'),
+              ((date(2011, 6,  9), date(2016,  4, 14)), 'Ομήρου Γιαννάκης'),
               ((date(2016, 6,  9), date.today()), 'Συλλούρης Δημήτρης'),)
 PRESIDENTS = tuple((range(*map(date.toordinal, dates)), {name})
                    for dates, name in PRESIDENTS)
@@ -142,7 +152,7 @@ ATTENDEE_SUBS = (('|', ' '),
                  ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),)
 
 
-def _extract_attendees(url, text, heading, date):
+def extract_attendees(url, text, heading, date):
     # Split at page breaks 'cause the columns will have likely shifted
     # and strip off leading whitespace
     _, _, attendee_table = apply_subs(text, ATTENDEE_SUBS).rpartition('🌮')
@@ -163,7 +173,7 @@ def _extract_attendees(url, text, heading, date):
 RE_SITTING_NUMBER = re.compile(r'Αρ\. (\d+)')
 
 
-def _extract_sitting(url, text):
+def extract_sitting(url, text):
     match = RE_SITTING_NUMBER.search(text)
     return int(match.group(1)) if match else logger.warning(
         'Unable to extract sitting number of {!r}'.format(url))
@@ -172,7 +182,7 @@ def _extract_sitting(url, text):
 _Cap2Item = namedtuple('Cap2Item', 'number title sponsors committees')
 
 
-def _extract_cap2_item(url, item):
+def extract_cap2_item(url, item):
     if not item:
         return
 
@@ -219,7 +229,7 @@ def _item_groupper():
     return inner
 
 
-def _extract_cap2(url, text):
+def extract_cap2(url, text):
     try:
         item_table = RE_CAP2.search(text).group(1)
     except AttributeError:
@@ -234,7 +244,7 @@ def _extract_cap2(url, text):
     items = (tuple(clean_spaces(' '.join(x), medial_newlines=True)
                    for x in it.islice(zip(*v), 1, None))
              for _, v in it.groupby(items, key=_item_groupper()))
-    items = (_extract_cap2_item(url, item) for item in items)
+    items = (extract_cap2_item(url, item) for item in items)
     # (Bill(<number>, <title>, <sponsor>, <committee>), ...)
     items = tuple(filter(None, items))
     if items:
@@ -250,22 +260,20 @@ pandoc_ListNumberMarker = object()
 
 RE_LIST_NUMBER = re.compile(r'\d{1,2}\.$')
 
-
-class _PandocTransforms:
-
-    AlignDefault = lambda _: None
-    OrderedList = lambda _: [pandoc_ListNumberMarker]
-    Para = lambda v: _walk_pandoc_ast(v)
-    Period = lambda _: '.'
-    Plain = lambda v: _walk_pandoc_ast(v)
-    Space = lambda _: ' '
-    Str = lambda v: pandoc_ListNumberMarker if RE_LIST_NUMBER.match(v) else v
-    Strong = lambda v: _walk_pandoc_ast(v)
-    Table = lambda v: v
+PANDOC_TRANSFORMS =  {
+    'AlignDefault': lambda _: None,
+    'OrderedList': lambda _: [pandoc_ListNumberMarker],
+    'Para': lambda v: _walk_pandoc_ast(v),
+    'Period': lambda _: '.',
+    'Plain': lambda v: _walk_pandoc_ast(v),
+    'Space': lambda _: ' ',
+    'Str': lambda v: pandoc_ListNumberMarker if RE_LIST_NUMBER.match(v) else v,
+    'Strong': lambda v: _walk_pandoc_ast(v),
+    'Table': lambda v: v,}
 
 
 def _stringify_pandoc_dicts(key, value, format_, meta):
-    return_value = getattr(_PandocTransforms, key)(value)
+    return_value = PANDOC_TRANSFORMS[key](value)
     if isinstance(return_value, list) and \
             all(isinstance(i, str) for i in return_value):
         return_value = [''.join(return_value)]
@@ -279,7 +287,7 @@ def _locate_cap2_table(node):
         return True
 
 
-def _extract_pandoc_items(url, list_):
+def extract_pandoc_items(url, list_):
     # Extract agenda items from the pandoc AST
     for x in list_:
         if not x:
@@ -292,10 +300,10 @@ def _extract_pandoc_items(url, list_):
                                 RE_TITLE_OTHER.sub('', title).rstrip('. '),
                                 sponsors, committees)
             else:
-                yield from _extract_pandoc_items(url, x)
+                yield from extract_pandoc_items(url, x)
 
 
-def _extract_pandoc_cap2(url, content):
+def extract_pandoc_cap2(url, content):
     tables = filter(_locate_cap2_table, json.loads(content)[1])
     try:
         table = next(tables)
@@ -303,12 +311,12 @@ def _extract_pandoc_cap2(url, content):
         logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
         return
 
-    items = tuple(_extract_pandoc_items(url, _walk_pandoc_ast([table])))
+    items = tuple(extract_pandoc_items(url, _walk_pandoc_ast([table])))
     if items:
         return next(zip(*items)), AgendaItems(url, items).bills_and_regs
 
 
-def _parse_transcript(url, func, content):
+def parse_transcript(url, func, content):
     if func == 'docx_to_json':
         text = pandoc_json_to(content, 'plain')
     else:
@@ -323,8 +331,8 @@ def _parse_transcript(url, func, content):
         return
 
     if func == 'docx_to_json':
-        cap2, bills_and_regs = (_extract_pandoc_cap2(url, content) or
+        cap2, bills_and_regs = (extract_pandoc_cap2(url, content) or
                                 ((), ()))
     else:
-        cap2, bills_and_regs = _extract_cap2(url, text) or ((), ())
+        cap2, bills_and_regs = extract_cap2(url, text) or ((), ())
     return url, text, heading, date, cap2, bills_and_regs

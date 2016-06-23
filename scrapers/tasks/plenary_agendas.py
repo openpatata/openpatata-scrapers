@@ -48,10 +48,10 @@ class PlenaryAgendas(Task):
     async def process_agenda(self, url):
         if url[-4:] == '.pdf':
             _, payload = await self.c.get_payload(url, decode=True)
-            return _parse_pdf_agenda, (url, payload)
+            return parse_pdf_agenda, (url, payload)
         else:
             html = await self.c.get_html(url)
-            return _parse_agenda, (url, html)
+            return parse_agenda, (url, html)
 
     def after(output):
         for url, date, text, agenda_items in \
@@ -140,7 +140,7 @@ RE_ITEM_NO = re.compile(r'^\d+\. *')
 RE_TITLE_OTHER = re.compile(r'\. *\(.*')
 
 
-def _extract_id_and_title(url, item):
+def extract_id_and_title(url, item):
     if not item or item.startswith('ΚΕΦΑΛΑΙΟ'):  # Skip headings
         return
 
@@ -207,14 +207,14 @@ def extract_sitting(url, text):
 RE_JUNK = re.compile(r'^ *([\.…]+)', re.MULTILINE)
 
 
-def _parse_agenda(url, html):
+def parse_agenda(url, html):
     text = clean_spaces(html.xpath('string(//div[@class="articleBox"])'))
 
     agenda_items = (clean_spaces(RE_JUNK.sub('', agenda_item.text_content()),
                                  medial_newlines=True)
                     for agenda_item in html.xpath('//div[@class="articleBox"]'
                                                   '//tr'))
-    agenda_items = filter(None, map(_extract_id_and_title,
+    agenda_items = filter(None, map(extract_id_and_title,
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
     return url, \
@@ -239,22 +239,22 @@ def _group_items_of_pdf():
     return inner
 
 
-def _clean_title_text(text):
+def clean_title_text(text):
     return ft.reduce(lambda s, j: ''.join((s[:j.start()], ' '*len(j.group(1)),
                                            s[j.end():])),
                      RE_JUNK.finditer(text), text)
 
 
-def _parse_pdf_agenda(url, text):
+def parse_pdf_agenda(url, text):
     if (url == 'http://www.parliament.cy/images/media/redirectfile/'
                '13-0312015- agenda ΤΟΠΟΘΕΤΗΣΕΙΣ doc.pdf'):
         # `TableParser` chokes on its mixed two- and three-col layout
-        logger.warning('Skipping {!r} in `_parse_pdf_agenda`'.format(url))
+        logger.warning('Skipping {!r} in `parse_pdf_agenda`'.format(url))
         return
 
     # Get rid of the page numbers 'cause they might intersect items in
     # the list
-    pages = RE_PAGE_NO.sub('', _clean_title_text(text))
+    pages = RE_PAGE_NO.sub('', clean_title_text(text))
     # And split the text at page breaks 'cause the table shifts from page to
     # page
     pages = tuple(filter(None, pages.split('\x0c')))
@@ -264,7 +264,7 @@ def _parse_pdf_agenda(url, text):
     # either contain a list number or be left blank
     agenda_items = (' '.join(i[-1] for i in v)
                     for _, v in it.groupby(rows_, key=_group_items_of_pdf()))
-    agenda_items = filter(None, map(_extract_id_and_title,
+    agenda_items = filter(None, map(extract_id_and_title,
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
     return url, \

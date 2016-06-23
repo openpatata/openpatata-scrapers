@@ -26,14 +26,14 @@ class CommitteeReports(Task):
 
     async def process_committee_report_listing(self, url):
         html = await self.c.get_html(url, clean=True)
-        return _parse_committee_report_listing(url, html)
+        return parse_committee_report_listing(url, html)
 
     def after(output):
         for committee_report in output:
-            _parse_committee_report(*committee_report)
+            parse_committee_report(*committee_report)
 
 
-def _parse_committee_report_listing(url, html):
+def parse_committee_report_listing(url, html):
     date = None
     for item in html.xpath('//td/*[self::ul or self::p]'):
         if item.tag == 'p':
@@ -48,7 +48,7 @@ def _parse_committee_report_listing(url, html):
             yield url, date, item
 
 
-def _parse_committee_report(url, date, item):
+def parse_committee_report(url, date, item):
     try:
         link = item.xpath('.//a[1]/@href')[0]
     except IndexError:
