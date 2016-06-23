@@ -1,5 +1,5 @@
 
-"""Models for our records."""
+"""Model classes."""
 
 from collections import OrderedDict
 from copy import deepcopy

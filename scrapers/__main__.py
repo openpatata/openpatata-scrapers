@@ -127,10 +127,10 @@ def export(args):
         -h --help           Show this screen
     """
     def _export(collection, format_):
-        from .tasks import _is_subclass, _models
+        from .tasks import _is_subclass, models
         export_fns = {m.collection.name: m.export
-                      for m in _models.__dict__.values()
-                      if _is_subclass(m, _models.InsertableRecord)}
+                      for m in models.__dict__.values()
+                      if _is_subclass(m, models.InsertableRecord)}
         try:
             print(export_fns[collection](format_))
         except KeyError:

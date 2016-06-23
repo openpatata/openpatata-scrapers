@@ -6,10 +6,10 @@ import json
 import logging
 from pathlib import Path
 
-from ._models import (ContactDetails, Identifier, Link,
-                      MP, MultilingualField, OtherName)
-from .questions import pair_name
 from ..crawling import Task
+from ..models import (ContactDetails, Identifier, Link,
+                       MP, MultilingualField, OtherName)
+from ..reconciliation import pair_name
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
 

@@ -11,13 +11,13 @@ import re
 
 import pandocfilters
 
-from ._models import Bill, MP, PlenarySitting as PS
 from .plenary_agendas import \
     (RE_ID, RE_PAGE_NO, RE_TITLE_OTHER,
      AgendaItems, extract_parliamentary_period, extract_session)
-from .questions import pair_name
 from ..crawling import Task
 from ..misc_utils import starfilter
+from ..models import Bill, MP, PlenarySitting as PS
+from ..reconciliation import pair_name
 from ..text_utils import \
     (apply_subs, clean_spaces, date2dato, pandoc_json_to, parse_long_date,
      TableParser)
@@ -86,7 +86,7 @@ class PlenaryTranscripts(Task):
                    agenda=PS.PlenaryAgenda(cap2=cap2),
                    attendees=[{'mp_id': a} for a in attendees],
                    date=date,
-                   links=[PS.PlenaryAgendaLink(type='transcript', url=url)],
+                   links=[PS.Link(type='transcript', url=url)],
                    parliamentary_period_id=extract_parliamentary_period(url, heading),
                    session=extract_session(url, heading),
                    sitting=extract_sitting(url, heading))
@@ -143,13 +143,20 @@ def _select_president(date):
 
 
 ATTENDEE_SUBS = (('|', ' '),
+                 ('των παρόντων με αλφαβητική σειρά:', '🌮'),
                  ('Παρόντες βουλευτές', '🌮'),
+                 ('Παρόντες  βουλευτές', '🌮'),
                  ('ΠΑΡΌΝΤΕΣ ΒΟΥΛΕΥΤΈΣ', '🌮'),      # pandoc
                  ('(Ώρα λήξης: 6.15 μ.μ.)', '🌮'),  # 2015-03-19
+                 ('Παρόντες\n', '🌮'),  # 2006-07-06
                  ('Παρόντες αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),
+                 ('Αντιπρόσωποι Θρησκευτικών Ομάδων', '🌯'),
+                 ('Aντιπρόσωποι Θρησκευτικών Ομάδων', '🌯'),
                  ('Αντιπρόσωποι θρησκευτικών ομάδων', '🌯'),  # 2014-10-23
+                 ('Παρόντες αντιπ΄.ρόσωποι θρησκευτικών ομάδων', '🌯'),
                  ('Περιεχόμενα', '🌯'),
-                 ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),)
+                 ('ΠΕΡΙΕΧΟΜΕΝΑ', '🌯'),
+                 ('ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ', '🌯'),)
 
 
 def extract_attendees(url, text, heading, date):

@@ -3,8 +3,8 @@
 
 from pathlib import Path
 
-from .. import default_db
-from ..records import InsertableRecord, SubRecord
+from . import default_db
+from .records import InsertableRecord, SubRecord
 
 
 class Bill(InsertableRecord):
@@ -212,12 +212,12 @@ class PlenarySitting(InsertableRecord):
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'links': {'$each': [], '$sort': {'type': 1}}}}
 
-    class PlenaryAgenda(SubRecord):
-        template = {'cap1': [], 'cap2': [], 'cap4': []}
-
-    class PlenaryAgendaLink(SubRecord):
+    class Link(SubRecord):
         template = {'url': None, 'type': None}
         required_properties = ('url', 'type')
+
+    class PlenaryAgenda(SubRecord):
+        template = {'cap1': [], 'cap2': [], 'cap4': []}
 
 
 class Question(InsertableRecord):

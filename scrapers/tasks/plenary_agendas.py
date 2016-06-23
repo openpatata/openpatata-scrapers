@@ -5,8 +5,8 @@ import itertools as it
 import logging
 import re
 
-from ._models import Bill, PlenarySitting as PS
 from ..crawling import Task
+from ..models import Bill, PlenarySitting as PS
 from ..text_utils import (clean_spaces, parse_long_date, TableParser,
                           ungarble_qh)
 
@@ -61,7 +61,7 @@ class PlenaryAgendas(Task):
                 agenda=PS.PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
                                         cap4=[i for i, _ in agenda_items.cap4]),
                 date=date,
-                links=[PS.PlenaryAgendaLink(type='agenda', url=url)],
+                links=[PS.Link(type='agenda', url=url)],
                 parliamentary_period_id=extract_parliamentary_period(url, text),
                 session=extract_session(url, text),
                 sitting=extract_sitting(url, text))

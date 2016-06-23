@@ -2,8 +2,8 @@
 import itertools as it
 import logging
 
-from . import _models as models
 from ..crawling import Task
+from ..models import CommitteeReport
 from ..text_utils import clean_spaces, parse_short_date
 
 logger = logging.getLogger(__name__)
@@ -56,12 +56,12 @@ def parse_committee_report(url, date, item):
                      .format(item.text_content(), url))
         return
 
-    committee_report = models.CommitteeReport(
-        _sources=[url],
-        date_circulated=date,
-        title=clean_spaces(item.text_content(), medial_newlines=True),
-        url=link)
+    committee_report = CommitteeReport(_sources=[url],
+                                       date_circulated=date,
+                                       title=clean_spaces(item.text_content(),
+                                                          medial_newlines=True),
+                                       url=link)
     try:
         committee_report.insert(merge=committee_report.exists)
-    except models.InsertError as e:
+    except committee_report.InsertError as e:
         logger.error(e)
