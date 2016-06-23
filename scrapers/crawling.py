@@ -3,7 +3,9 @@
 
 import asyncio
 from collections import namedtuple
+import datetime as dt
 import functools
+from pathlib import Path
 
 from aiohttp import ClientSession, TCPConnector
 import gridfs
@@ -105,13 +107,30 @@ class Crawler:
                 await self.exec_blocking(decode_func)(payload)
 
     @classmethod
-    def clear_cache(cls):
-        """Clear the cache.
+    def clear_text_cache(cls):
+        """Clear the text cache.
 
         Manually clear the text cache every so often, in the absence of
         a mechanism to check whether a document is stale.
         """
         _CACHE.text.drop()
+
+    @classmethod
+    def dump_cache(cls, cache_path=None):
+        cache_dir = Path(cache_path or 'cache-dump')
+        cache_dir.mkdir(exist_ok=True)
+        for file in _CACHE.file.find():
+            path = Path(cache_dir, file.url.replace('://', '___'))
+            path.parent.mkdir(exist_ok=True, parents=True)
+            with path.open('wb') as file_handle:
+                file_handle.write(file.read())
+        for file in _CACHE.text.find():
+            path = Path(cache_dir, file['url'].replace('://', '___'))
+            path.parent.mkdir(exist_ok=True, parents=True)
+            with path.open('w') as file_handle:
+                file_handle.write(file['text'])
+        with (cache_dir/'VERSION').open('w') as file_handle:
+            file_handle.write(dt.datetime.now().isoformat())
 
 
 class Task:

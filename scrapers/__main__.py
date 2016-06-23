@@ -148,8 +148,21 @@ def clear_cache(_):
     Options:
         -h --help       Show this screen
     """
-    from scrapers import crawling
-    crawling.Crawler.clear_cache()
+    from scrapers.crawling import Crawler
+    Crawler.clear_text_cache()
+
+
+@_register
+def dump_cache(args):
+    """Usage: scrapers dump_cache [<location>]
+
+    Dump the crawler's cache at <location>.
+
+    Options:
+        -h --help       Show this screen
+    """
+    from scrapers.crawling import Crawler
+    Crawler.dump_cache(args['<location>'])
 
 
 def main():
