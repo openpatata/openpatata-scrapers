@@ -127,7 +127,8 @@ def export(args):
         -h --help           Show this screen
     """
     def _export(collection, format_):
-        from .tasks import _is_subclass, models
+        from . import models
+        from .tasks import _is_subclass
         export_fns = {m.collection.name: m.export
                       for m in models.__dict__.values()
                       if _is_subclass(m, models.InsertableRecord)}

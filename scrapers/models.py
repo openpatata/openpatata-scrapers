@@ -5,6 +5,7 @@ from pathlib import Path
 
 from . import default_db
 from .records import InsertableRecord, SubRecord
+from .text_utils import translit_slugify
 
 
 class Bill(InsertableRecord):
@@ -115,7 +116,6 @@ class MP(InsertableRecord):
     def generate__id(self):
         if self.data['_id']:
             return self.data['_id']
-        from ..text_utils import translit_slugify
         return translit_slugify(self.data['name']['el'])
 
     def generate_inserts(self, merge):
