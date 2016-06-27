@@ -111,11 +111,10 @@ class MP(InsertableRecord):
                 'links': [],
                 'name': None,
                 'other_names': [],
+                'place_of_origin': None,
                 'tenures': []}
 
     def generate__id(self):
-        if self.data['_id']:
-            return self.data['_id']
         return translit_slugify(self.data['name']['el'])
 
     def generate_inserts(self, merge):

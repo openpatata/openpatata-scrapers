@@ -206,7 +206,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
 
     def __init__(self, *, _raw_data={}, **kwargs):
         super().__init__(_raw_data=_raw_data, **kwargs)
-        if not _raw_data:
+        if not _raw_data and not self.data['_id']:
             self.data['_id'] = self.generate__id()
 
     @property

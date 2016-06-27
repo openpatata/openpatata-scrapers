@@ -13,7 +13,7 @@ from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
 
 
-class MPs(Task):
+class MpProfiles(Task):
 
     with (Path(__file__).parent.parent
           /'data'/'reconciliation'/'profile_names.csv').open() as file:
@@ -49,7 +49,8 @@ class MPs(Task):
 
     def after(output):
         for url, html_el, html_en in output:
-            extractor = extract_contact_details(url, 'el', html_el)
+            birth_date, place_of_origin = extract_birth_details(url, html_el, 'el')
+            extractor = extract_contact_details(url, html_el, 'el')
             contact_details = [ContactDetails(type=t, value=f(i))
                                 for l, t, d, f in CONTACT_DETAIL_SUBS
                                 if extractor.get(l)
@@ -67,20 +68,21 @@ class MPs(Task):
                                      note="Official spelling in the 'en' locale;"
                                           " possibly anglicised")]
 
-            mp = MP(_id=MPs.NAMES.get(name['el']),
+            mp = MP(_id=MpProfiles.NAMES.get(name['el']),
                     _sources=[url],
-                    birth_date=extract_birth_date_place(url, html_el)[0],
+                    birth_date=birth_date,
                     contact_details=contact_details,
                     email=email,
                     image=[*images, None][0],
                     images=images,
                     links=links,
-                    name=name,
-                    other_names=other_names)
+                    # name=name,
+                    # other_names=other_names,
+                    place_of_origin=MultilingualField(el=place_of_origin))
             mp.insert(merge=mp.exists)
 
 
-class ReconcileProfileNames(MPs):
+class ReconcileProfileNames(MpProfiles):
 
     def after(output):
         names_and_ids = {i['_id']: i['name']['el'] for i in MP.collection.find()}
@@ -89,7 +91,7 @@ class ReconcileProfileNames(MPs):
         output = StringIO()
         csv_writer = csv.writer(output)
         csv_writer.writerow(('name', 'id'))
-        csv_writer.writerows(pair_name(n, names_and_ids, MPs.NAMES)
+        csv_writer.writerows(pair_name(n, names_and_ids, MpProfiles.NAMES)
                              for n in names)
         print(output.getvalue())
 
@@ -186,39 +188,30 @@ LABELS = {
         'studies': 'Studies',}}
 
 
-def extract_item(el, en):
-    html = locals()
-
-    def inner(lang, *items):
-        for item in items:
-            item = html[lang].xpath('//p[contains(strong/text(), "{}")]/text()'
-                                    .format(LABELS[lang][item]))
-            if item:
-                yield item
-    return inner
+def extract_items(html, lang, *items):
+    return html.xpath('//p[{}]/text()'
+                      .format(' or '.join('contains(strong/text(), "{}")'
+                              .format(LABELS[lang][i]) for i in items)))
 
 
-def extract_birth_date_place(url, html):
-    extractor = extract_item(html, None)
-    birth_date, birth_place = None, None
-    try:
-        birth_things = next(extractor('el', 'poo dob', 'pob dob', 'poo'))
-    except StopIteration:
-        logger.error('No date and place of birth found in ' + repr(url))
-    else:
-        birth_things = clean_spaces(''.join(birth_things).strip(':.'),
-                                    medial_newlines=True)
+def extract_birth_details(url, html, lang):
+    birth_date, place_of_origin = None, None
+    data = ' '.join(extract_items(html, lang, 'poo dob', 'poo'))
+    data = clean_spaces(''.join(data).strip(':.'), medial_newlines=True)
+    if data:
         try:
-            birth_place, birth_date = birth_things.split(',')
+            place_of_origin, birth_date = data.split(',')
         except ValueError:
-            logger.error('No date of birth found in ' + repr(url))
-            birth_place = birth_things
+            logger.error('No birth date found in ' + repr(url))
+            place_of_origin = data
         else:
             birth_date = parse_long_date(birth_date)
-    return birth_date, birth_place
+    else:
+        logger.error('No birth date or place of origin found in ' + repr(url))
+    return birth_date, place_of_origin
 
 
-def extract_contact_details(url, lang, html):
+def extract_contact_details(url, html, lang):
     heading = {'el': 'Στοιχεία επικοινωνίας', 'en': 'Contact info'}[lang]
     try:
         contact_details = next(iter(html.xpath(
