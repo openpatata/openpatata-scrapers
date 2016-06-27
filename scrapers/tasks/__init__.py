@@ -24,8 +24,10 @@ def _camel_to_snake(s):
 # and assign Tasks to a dictionary of Task.name–Task key–value pairs.
 # We're not dealing with Task.name clashes, 'cause that would not not not be
 # lazy
-TASKS = (import_module('.'.join((__name__, m.stem))).__dict__
+TASKS = (import_module('.'.join((__name__, m.stem)))
          for m in Path(__file__).parent.glob('[!__]*.py'))
-TASKS = it.chain.from_iterable(i.items() for i in TASKS)
-TASKS = {_camel_to_snake(v.__name__): v
-         for _, v in TASKS if _is_subclass(v, Task)}
+TASKS = it.chain.from_iterable(zip(it.repeat(i.__name__.split('.')[-1]),
+                                   i.__dict__.values())
+                               for i in TASKS)
+TASKS = {':'.join((m, _camel_to_snake(v.__name__))): v
+         for m, v in TASKS if _is_subclass(v, Task)}

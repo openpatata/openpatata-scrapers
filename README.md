@@ -43,9 +43,9 @@ Its default value is `mongodb://localhost:27017/openpatata-data`, where
 To crawl the parliament website:
 
 ```bash
-python3 -m scrapers run plenary_agendas 2> error.log
-python3 -m scrapers run plenary_transcripts 2>> error.log
-python3 -m scrapers run questions 2>> error.log
+python3 -m scrapers run plenary_sittings:plenary_agendas 2> error.log
+python3 -m scrapers run plenary_sittings:plenary_transcripts 2>> error.log
+python3 -m scrapers run questions:questions 2>> error.log
 ```
 
 To dump a mongo collection:
