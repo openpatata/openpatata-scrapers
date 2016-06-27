@@ -9,10 +9,10 @@ README.
 Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
-    init            Populate the database
-    run             Run a scraping task
-    dump            Dump a collection (table) on disk
-    clear_cache     Clear the crawler's cache
+    init                Populate the database
+    run                 Run a scraping task
+    dump                Dump a collection (table) on disk
+    clear_text_cache    Clear the crawler's cache
 
 Options:
     -h --help       Show this screen
@@ -141,8 +141,8 @@ def export(args):
 
 
 @_register
-def clear_cache(_):
-    """Usage: scrapers clear_cache
+def clear_text_cache(args):
+    """Usage: scrapers clear_text_cache
 
     Clear the crawler's cache.
 

@@ -119,6 +119,7 @@ class Crawler:
 
     @classmethod
     def dump_cache(cls, cache_path=None):
+        """Save the cache on disk."""
         cache_dir = Path(cache_path or 'cache-dump')
         cache_dir.mkdir(exist_ok=True)
         for file in _CACHE.file.find():
