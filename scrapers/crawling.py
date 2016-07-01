@@ -8,6 +8,7 @@ import datetime as dt
 import functools
 import logging
 from pathlib import Path
+from urllib.parse import urlencode, urlparse, urlunparse
 
 from aiohttp import ClientSession, TCPConnector
 import gridfs
@@ -124,12 +125,15 @@ class Crawler:
         cache_dir = Path(cache_path or 'cache-dump')
         cache_dir.mkdir(exist_ok=True)
         for file in _CACHE.file.find():
-            path = Path(cache_dir, file.url.replace('://', '___'))
+            path = Path(cache_dir, file.url.replace('://', '%3A%2F%2F'))
             path.parent.mkdir(exist_ok=True, parents=True)
             with path.open('wb') as file_handle:
                 file_handle.write(file.read())
         for file in _CACHE.text.find():
-            path = Path(cache_dir, file['url'].replace('://', '___'))
+            url = urlparse(file['url'])._asdict()
+            if file['form_data']:
+                url['query'] = urlencode(file['form_data'])
+            path = Path(cache_dir, urlunparse(url.values()).replace('://', '%3A%2F%2F'))
             path.parent.mkdir(exist_ok=True, parents=True)
             with path.open('w') as file_handle:
                 file_handle.write(file['text'])
