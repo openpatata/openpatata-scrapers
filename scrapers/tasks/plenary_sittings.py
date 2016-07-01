@@ -6,6 +6,7 @@ import functools as ft
 from io import StringIO
 import itertools as it
 import json
+import os
 from pathlib import Path
 import re
 
@@ -607,3 +608,39 @@ def parse_transcript(url, func, content):
     else:
         cap2, bills_and_regs = extract_cap2(url, text) or ((), ())
     return url, text, heading, date, cap2, bills_and_regs
+
+
+class FirstReading(Task):
+
+    remote_scraper = 'https://morph.io/wfdd/cypriot-parliament-1r-scraper'
+
+    async def __call__(self):
+        url = 'https://api.morph.io/wfdd/cypriot-parliament-1r-scraper/data.json'
+        params = {'key': os.environ['MORPH_KEY'],
+                  'query': 'SELECT * FROM first_reading'}
+        return await self.crawler.get_payload(url, params=params)
+
+    def after(output):
+        docs = json.loads(output.decode())
+        docs = it.groupby(sorted(docs, key=lambda i: i['date_tabled']),
+                          key=lambda i: i['date_tabled'])
+        for date, items in docs:
+            if PS.collection.count({'date': date}) != 1:
+                logger.error('No single match found for ' + repr(date))
+                continue
+            items = tuple(items)
+            ps = PS(**{**PS.collection.find_one({'date': date}),
+                       '_sources': [FirstReading.remote_scraper],
+                       'agenda': PS.PlenaryAgenda(cap2=[i['number']
+                                                        for i in items])})
+            ps.insert(merge=True)
+
+            for item in items:
+                bill = Bill(_sources=[FirstReading.remote_scraper],
+                            actions=[Bill.Submission(plenary_sitting_id=ps._id,
+                                                     sponsors=item['sponsors'],
+                                                     committees_referred_to=item['committees'],
+                                                     title=item['title'].rstrip('.'))],
+                            identifier=item['number'],
+                            title=item['title'].rstrip('.'))
+                bill.insert(merge=bill.exists)
