@@ -38,17 +38,17 @@ class Bill(InsertableRecord):
                             key=lambda v: v.rpartition(' ')[::-1])
         yield {'$push': {'_sources': {'$each': [], '$sort': 1},
                          'actions': {'$each': [],
-                                     '$sort': {'plenary_id': 1}}},
+                                     '$sort': {'plenary_sitting_id': 1}}},
                '$set': {'title': titles[-1],
                         'titles': titles}}
 
     class Submission(SubRecord):
         template = {'action': 'submission',
-                    'plenary_id': None,
+                    'plenary_sitting_id': None,
                     'committees_referred_to': None,
-                    'sponsors': None}
-        required_properties = ('plenary_id', 'committees_referred_to',
-                               'sponsors')
+                    'sponsors': None,
+                    'title': None}
+        required_properties = ('plenary_sitting_id', 'sponsors', 'title')
 
 
 class CommitteeReport(InsertableRecord):

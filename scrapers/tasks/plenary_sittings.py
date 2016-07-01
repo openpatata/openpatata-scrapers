@@ -348,17 +348,17 @@ class PlenaryTranscripts(Task):
 
             for bill in bills:
                 try:
-                    actions = Bill.Submission(plenary_id=plenary_sitting._id,
-                                              sponsors=bill.sponsors,
-                                              committees_referred_to=bill.committees)
-                    actions = [actions]
+                    submit = Bill.Submission(plenary_sitting_id=plenary_sitting._id,
+                                             sponsors=bill.sponsors,
+                                             committees_referred_to=bill.committees,
+                                             title=bill.title)
                 except ValueError:
                     # Discard likely malformed bills
                     logger.error('Unable to parse {!r} into a bill'
                                  .format(bill))
                     continue
 
-                bill = Bill(_sources=[url], actions=actions,
+                bill = Bill(_sources=[url], actions=[submit],
                             identifier=bill.number, title=bill.title)
                 bill.insert(merge=bill.exists)
 
