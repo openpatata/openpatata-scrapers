@@ -387,7 +387,7 @@ PRESIDENTS = ((((1991, 5, 30), (1996,  5, 26)),  'Γαλανός Αλέξης'),
               (((2011, 6,  2), (2016,  4, 14)),  'Ομήρου Γιαννάκης'),
               (((2016, 6,  8), dt.date.today()), 'Συλλούρης Δημήτρης'),)
 PRESIDENTS = tuple(((dt.date(*s) + dt.timedelta(days=1),
-                     dt.date(*e) if isinstance(e, tuple) else e),
+                     dt.date(*e) + dt.timedelta(days=1) if isinstance(e, tuple) else e),
                     {name})
                    for (s, e), name in PRESIDENTS)
 PRESIDENTS = tuple((range(*map(dt.date.toordinal, dates)), name)
