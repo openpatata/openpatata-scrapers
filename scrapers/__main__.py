@@ -9,34 +9,35 @@ README.
 Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
-    init                Populate the database
-    run                 Run a scraping task
-    dump                Dump a collection (table) on disk
-    clear_text_cache    Clear the crawler's cache
+    cache--clear   Clear the crawler's cache
+    dump           Dump documents in a collection as YAML
+    cache--dump    Dump the crawler's cache on disk
+    export         Export a collection to CSV or JSON
+    init           Populate the database
+    run            Run a scraping task
 
 Options:
     -h --help       Show this screen
     -v --verbose    Print error messages of all levels
 """
 
-import itertools as it
 import logging
 from pathlib import Path
-from textwrap import dedent
+import textwrap
 
 from docopt import docopt, DocoptExit
 
-from . import default_db, io
-
-logger = logging.getLogger(__name__)
+from . import crawling, default_db, io, models, tasks
 
 
-def _register(fn):
+def _register(fn, name=None):
     """Super simple registry and registrar."""
+    if isinstance(fn, str):
+        return lambda v: _register(v, name=fn)
     fn.__doc__ = fn.__doc__.partition('\n')
-    fn.__doc__ = fn.__doc__[:-1] + (dedent(fn.__doc__[-1]),)
+    fn.__doc__ = fn.__doc__[:-1] + (textwrap.dedent(fn.__doc__[-1]),)
     fn.__doc__ = ''.join(fn.__doc__)
-    _register.__dict__[fn.__name__] = fn
+    _register.__dict__[name or fn.__name__] = fn
     return fn
 
 
@@ -50,20 +51,15 @@ def init(args):
         --keep-db       Don't drop the database before importing
         -h --help       Show this screen
     """
-    def _init(folders, keep_db):
-        if not keep_db:
-            default_db.command('dropDatabase')
+    if not args['--keep-db']:
+        default_db.command('dropDatabase')
 
-        files = it.chain.from_iterable(map(
-            lambda folder: (
-                lambda folder: zip(folder.glob('*.yaml'),
-                                   it.repeat(folder.stem)))(Path(folder)),
-            folders))
-        for path, collection in files:
-            default_db[collection].insert_one(
-                io.YamlManager.load_record(str(path), path.stem))
-
-    _init(args['<from-folders>'] or ('./data/mps',), args['--keep-db'])
+    files = ((f, d.stem)
+             for d in map(Path, args['<from-folders>'] or ('./data/mps',))
+             for f in d.glob('*.yaml'))
+    for path, collection in files:
+        default_db[collection].insert_one(io.YamlManager.load_record(str(path),
+                                                                     path.stem))
 
 
 @_register
@@ -76,16 +72,13 @@ def run(args):
         -d --debug      Print asyncio debugging messages to `stderr`
         -h --help       Show this screen
     """
-    from scrapers import crawling
-    from scrapers.tasks import TASKS
-
-    def _run(task, debug):
-        if task not in TASKS:
-            raise DocoptExit('Available tasks are: ' +
-                             '; '.join(sorted(TASKS)))
-        crawling.Crawler(debug=debug)(TASKS[task])
-
-    _run(args['<task>'], args['--debug'])
+    if args['<task>'] not in tasks.TASKS:
+        raise DocoptExit('\n'.join(['Available tasks are: '] +
+                                   ['\t' + i
+                                    for i in textwrap
+                                     .wrap('; '.join(sorted(tasks.TASKS)))] +
+                                   ['']))
+    crawling.Crawler(debug=args['--debug'])(tasks.TASKS[args['<task>']])
 
 
 @_register
@@ -99,23 +92,17 @@ def dump(args):
                                     [default: ./data-new]
         -h --help               Show this screen
     """
-    def _dump(collection, location):
+    for collection in args['<collections>']:
         collection = default_db[collection]
         if collection.count() == 0:
             raise DocoptExit('Collection {!r} is empty'
                              .format(collection.full_name))
 
-        head = Path(location)/collection.name
+        head = Path(args['--location'])/collection.name
         if not head.exists():
             head.mkdir(parents=True)
         for document in collection.find():
-            try:
-                io.YamlManager.dump_record(document, str(head))
-            except io.DumpError as e:
-                logger.error(e)
-
-    for collection in args['<collections>']:
-        _dump(collection, args['--location'])
+            io.YamlManager.dump_record(document, str(head))
 
 
 @_register
@@ -126,44 +113,37 @@ def export(args):
         --format=<format>   Export format [default: csv]
         -h --help           Show this screen
     """
-    def _export(collection, format_):
-        from . import models
-        from .tasks import _is_subclass
-        export_fns = {m.collection.name: m.export
-                      for m in models.__dict__.values()
-                      if _is_subclass(m, models.InsertableRecord)}
-        try:
-            print(export_fns[collection](format_))
-        except KeyError:
-            raise DocoptExit('No collection {!r}'.format(collection))
-
-    _export(args['<collection>'], args['--format'])
+    export_fns = {m.collection.name: m.export
+                  for m in models.__dict__.values()
+                  if tasks._is_subclass(m, models.InsertableRecord)}
+    try:
+        print(export_fns[args['<collection>']](args['--format']))
+    except KeyError:
+        raise DocoptExit('No collection {!r}'.format(args['<collection>']))
 
 
-@_register
+@_register('cache--clear')
 def clear_text_cache(args):
-    """Usage: scrapers clear_text_cache
+    """Usage: scrapers cache--clear
 
     Clear the crawler's cache.
 
     Options:
         -h --help       Show this screen
     """
-    from scrapers.crawling import Crawler
-    Crawler.clear_text_cache()
+    crawling.Crawler.clear_text_cache()
 
 
-@_register
+@_register('cache--dump')
 def dump_cache(args):
-    """Usage: scrapers dump_cache [<location>]
+    """Usage: scrapers cache--dump [<location>]
 
     Dump the crawler's cache at <location>.
 
     Options:
         -h --help       Show this screen
     """
-    from scrapers.crawling import Crawler
-    Crawler.dump_cache(args['<location>'])
+    crawling.Crawler.dump_cache(args['<location>'])
 
 
 def main():
