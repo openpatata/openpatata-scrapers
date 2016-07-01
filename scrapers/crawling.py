@@ -54,7 +54,8 @@ class Crawler:
         """Execute the supplied sub-tasks, aggregating their return values."""
         return await asyncio.gather(*tasks, loop=self._loop)
 
-    async def get_text(self, url, *, form_data=None, request_method='get'):
+    async def get_text(self, url, *,
+                        form_data=None, request_method='get', params=None):
         """Retrieve the decoded content of `url`."""
         exists = _CACHE.text.find_one(dict(url=url,
                                            form_data=form_data,
@@ -65,7 +66,7 @@ class Crawler:
         # Postpone the req until a slot has become available
         async with self._semaphore, \
                 self._session.request(request_method, url,
-                                      data=form_data) as response:
+                                      data=form_data, params=params) as response:
             text = await response.text()
             _CACHE.text.insert_one(dict(url=url,
                                         form_data=form_data,
@@ -78,7 +79,7 @@ class Crawler:
         text = await self.get_text(url, **kwargs)
         return await self.exec_blocking(html_to_lxml)(url, text, clean)
 
-    async def get_payload(self, url, *, decode=False):
+    async def get_payload(self, url, *, decode=False, params=None):
         """Retrieve the encoded content of `url`."""
         if decode is True:
             return await self._decode_payload(url, await self.get_payload(url))
@@ -88,7 +89,7 @@ class Crawler:
             return exists.read()
 
         async with self._semaphore, \
-                self._session.request('get', url) as response:
+                self._session.request('get', url, params=params) as response:
             payload = await response.read()
             _CACHE.file.put(payload, url=url)
             return payload
