@@ -12,13 +12,13 @@ from ..models import MP, Question
 from ..reconciliation import pair_name
 from ..text_utils import clean_spaces, parse_long_date, ungarble_qh
 
-with (Path(__file__).parent.parent
-      /'data'/'reconciliation'/'question_names.csv').open() as file:
-    NAMES = dict(it.islice(csv.reader(file), 1, None))
-
 
 class Questions(Task):
     """Create individual question records from question listings."""
+
+    with (Path(__file__).parent.parent
+          /'data'/'reconciliation'/'question_names.csv').open() as file:
+        NAMES = dict(it.islice(csv.reader(file), 1, None))
 
     async def process(self):
         url = 'http://www2.parliament.cy/parliamentgr/008_02.htm'
@@ -39,11 +39,24 @@ class Questions(Task):
         html = await self.c.get_html(url, clean=True)
         return (it.chain.from_iterable(await self.process_question_index(url)),
                 ((url, *question)
-                 for question in extract_questions(url, html)))
+                 for question in demarcate_questions(url, html)))
 
     def after(output):
-        for question in output:
-            _parse_question(*question)
+        for url, heading, body, footer, counter in output:
+            match = RE_HEADING.search(heading.text).groupdict()
+            question = Question(_position_on_page=counter,
+                                _sources=[url],
+                                answers=extract_answers(url, match, footer),
+                                by=extract_names(url, heading),
+                                date=parse_long_date(match['date']),
+                                heading=heading.text.rstrip('.'),
+                                identifier=match['id'],
+                                text='\n\n'.join(p.text for p in body).strip())
+            if question.exists:
+                logger.info('Merging question ' + repr(question))
+                question.insert(merge=True)
+            else:
+                question.insert()
 
 
 class ReconcileQuestionNames(Questions):
@@ -57,22 +70,24 @@ class ReconcileQuestionNames(Questions):
         output = StringIO()
         csv_writer = csv.writer(output)
         csv_writer.writerow(('name', 'id'))
-        csv_writer.writerows(pair_name(n, names_and_ids, NAMES) for n in names)
+        csv_writer.writerows(pair_name(n, names_and_ids, Questions.NAMES)
+                             for n in names)
         print(output.getvalue())
 
 
-def extract_questions(url, html):
+def demarcate_questions(url, html):
     """Pin down question boundaries."""
     heading = None  # <Element>
     body = []       # [<Element>, ...]
     footer = []
 
     counter = 0
-    for e in it.chain(html.xpath('//tr//p'),
+    for e in it.chain(html.xpath('//tr//*[self::hr or self::p]'),
                       (HtmlElement('Ερώτηση με αρ.'),)):    # Sentinel
         e.text = clean_spaces(e.text_content())
         norm_text = ungarble_qh(e.text)
-        if norm_text.startswith('Ερώτηση με αρ.'):
+        if norm_text.startswith(('Ερώτηση με αρ.',  'φΕρώτηση με αρ.',
+                                 '-Ερώτηση με αρ.', 'Περδίκη Ερώτηση με αρ.')):
             if heading is not None and body:
                 counter += 1
                 yield heading, body, footer, counter
@@ -112,7 +127,7 @@ RE_NAMES = re.compile(r'''({uc}{lc}+
                       re.VERBOSE)
 
 
-def _extract_answers(url, match, footer):
+def extract_answers(url, match, footer):
     answer_links = (e.xpath('.//a/@href') for e in footer)
     answer_links = it.chain.from_iterable(filter(None, answer_links))
     answer_links = sorted(set(answer_links))
@@ -122,23 +137,8 @@ def _extract_answers(url, match, footer):
     return answer_links
 
 
-def _extract_names(url, heading):
-    return [{'mp_id': NAMES[n]}
-             for n in RE_NAMES.findall(RE_NAMES_PREPARE.sub('', heading.text))]
-
-
-def _parse_question(url, heading, body, footer, counter):
-    match = RE_HEADING.match(heading.text).groupdict()
-    question = Question(_position_on_page=counter,
-                        _sources=[url],
-                        answers=_extract_answers(url, match, footer),
-                        by=_extract_names(url, heading),
-                        date=parse_long_date(match['date']),
-                        heading=heading.text.rstrip('.'),
-                        identifier=match['id'],
-                        text='\n\n'.join(p.text for p in body).strip())
-    if question.exists:
-        logger.info('Merging question ' + repr(question))
-        question.merge()
-    else:
-        question.insert()
+def extract_names(url, heading):
+    names = (Questions.NAMES.get(n) or
+              logger.error('No match found for {!r} in {!r}'.format(n, url))
+             for n in RE_NAMES.findall(RE_NAMES_PREPARE.sub('', heading.text)))
+    return [{'mp_id': n} for n in filter(None, names)]
