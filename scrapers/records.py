@@ -4,9 +4,13 @@
 from collections import OrderedDict
 from copy import deepcopy
 import itertools as it
+from pathlib import Path
 
+from jsonschema import Draft4Validator as Validator, FormatChecker
 import pymongo
 
+from .config import SCHEMAS
+from .io import YamlManager
 from .misc_utils import starfilter
 from .text_utils import _text_from_sp
 
@@ -72,9 +76,6 @@ class _prepare_record(type):
     def __new__(cls, name, bases, cls_dict):
         cls = super().__new__(cls, name, bases, cls_dict)
         cls.template = _sort(getattr(cls, 'template', {}))
-        cls.properties = set(cls.template)
-        cls.required_properties = sorted(getattr(cls, 'required_properties',
-                                                 ()))
         return cls
 
 
@@ -94,15 +95,6 @@ class BaseRecord(metaclass=_prepare_record):
 
     >>> Base(a=1, b=2)
     <Base: OrderedDict([('a', 1), ('b', 2), ('c', None)])>
-    >>> Base()   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
-    Traceback (most recent call last):
-      ...
-    ValueError: 'a', 'b' are required properties in
-    <Base: OrderedDict([('a', None), ('b', None), ('c', None)])>
-    >>> Base(d=4, e=5)    # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
-    Traceback (most recent call last):
-      ...
-    ValueError: 'd', 'e' are extraneous in <Base: OrderedDict(...)>
     """
 
     def __init__(self, *, _raw_data={}, **kwargs):
@@ -111,19 +103,6 @@ class BaseRecord(metaclass=_prepare_record):
             return
         self.data = deepcopy(self.template)
         self.data.update(kwargs)
-        # In the interest of getting things done within a reasonable time
-        # frame, we're punting on (very) light validation.  Notably,
-        # there's no type checking.  More thorough tests are found in
-        # the data repo
-        extraneous_properties = self.data.keys() - self.properties
-        if extraneous_properties:
-            raise ValueError(', '.join(map(repr,
-                                           sorted(extraneous_properties))) +
-                             ' are extraneous in ' + repr(self))
-        if self.required_properties and not all(map(self.data.get,
-                                                    self.required_properties)):
-            raise ValueError(', '.join(map(repr, self.required_properties)) +
-                             ' are required properties in ' + repr(self))
 
     def __repr__(self):
         return '<{}: {!r}>'.format(self.__class__.__name__, self.data)
@@ -132,9 +111,18 @@ class BaseRecord(metaclass=_prepare_record):
 class _prepare_insertable_record(_prepare_record):
 
     def __new__(cls, name, bases, cls_dict):
-        return super().__new__(
+        new_cls = super().__new__(
             cls, name, bases,
-            {**cls_dict, 'template': {**cls_dict.get('template', {}), '_id': None}})
+            {**cls_dict,
+             'template': {**cls_dict.pop('template', {}), '_id': None},
+             'schema': cls_dict.pop('schema', {})})
+        if isinstance(new_cls.schema, str):
+            new_cls.schema = YamlManager.load(str(Path(SCHEMAS,
+                                                       new_cls.schema + '.yaml'
+                                                       )))
+        new_cls.validator = Validator(new_cls.schema,
+                                      format_checker=FormatChecker(('email',)))
+        return new_cls
 
 
 class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
@@ -155,7 +143,9 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
 
         >>> class Insertable(InsertableRecord):
         ...     collection = test_db.test
-        ...     template = {'some_field': 'some_data'} \
+        ...     template = {'some_field': 'some_data'}
+        ...     schema = {'type': 'object',
+        ...               'properties': {'some_field': {'type': 'string'}}} \
 
         ...     def generate__id(self):
         ...         return 'insertable_test' \
@@ -180,11 +170,18 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                      ('some_field', 'some_other_data')])
         >>> foo.exists
         False
+        >>> foo.data['some_field'] = 1
+        >>> foo.insert()     # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
+        ...
+        Traceback (most recent call last):
+        ...
+        jsonschema.exceptions.ValidationError: 1 is not of type 'string'
+        ...
         >>> del foo.data['_id']
         >>> foo.insert()   # doctest: +ELLIPSIS
         Traceback (most recent call last):
-          ...
-        ValueError: No `_id` provided in <Insertable: OrderedDict([('some_field', 'some_other_data')])>
+        ...
+        ValueError: No `_id` provided in <Insertable: OrderedDict([('some_field', 1)])>
 
     Test that, absent of an existing document in the database,
     `insert(merge=True)` will raise `InsertError`.
@@ -192,7 +189,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         >>> bar = Insertable()
         >>> bar.insert(merge=True)    # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
         Traceback (most recent call last):
-          ...
+        ...
         scrapers.records.InsertError: Unable to insert or merge
         <Insertable: OrderedDict([('_id', 'insertable_test'),
                                   ('some_field', 'some_data')])>
@@ -214,9 +211,10 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         """The record's primary key."""
         return self.data.get('_id')
 
-    def delete(self):
+    def delete(self, **kwargs):
         """Delete the document from the database."""
-        return self.collection.find_one_and_delete(filter={'_id': self._id})
+        return self.collection.find_one_and_delete(filter={'_id': self._id},
+                                                   **kwargs)
 
     @property
     def exists(self):
@@ -224,7 +222,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         Check to see whether a record with the same `self._id` exists in
         the database.
         """
-        return bool(self.collection.find_one(filter={'_id': self._id}))
+        return bool(self.collection.find_one(self._id))
 
     @classmethod
     def export(cls, format_='csv'):
@@ -237,7 +235,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
             ('mongoexport', '--type=' + format_,
                             '--db=' + cls.collection.database.name,
                             '--collection=' + cls.collection.name,
-                            '--fields=' + ','.join(sorted(cls.properties))))
+                            '--fields=' + ','.join(sorted(cls.template))))
 
     def generate__id(self):
         """Override to create an `_id`."""
@@ -270,6 +268,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         if not self._id:
             raise ValueError('No `_id` provided in ' + repr(self))
         new = not merge
+        orig_data = self.collection.find_one(self._id)
         if new:
             self.delete()
             data = deepcopy(self.data)
@@ -280,14 +279,36 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         for _ in inserts:
             data.pop('_id')
             insert = inserts.send(data)
-            data = self.collection.find_one_and_update(
-                filter={'_id': self._id}, update=insert, upsert=new,
-                return_document=pymongo.ReturnDocument.AFTER)
+            data = self.update(insert, upsert=new)
             if not data:
                 raise InsertError('Unable to insert or merge ' + repr(self) +
                                   ' with operation ' + repr(insert))
+        try:
+            self.validator.validate(data)
+        except:
+            # Roll back the changes if validation has failed
+            self.delete()
+            if orig_data:
+                self.update({'$set': orig_data}, upsert=True)
+            raise
         self.data = data
         return data
+
+    def replace(self, data=None, **kwargs):
+        """A low-level `replace` that bypasses the generated inserts."""
+        return self.collection\
+            .find_one_and_replace(filter={'_id': self._id},
+                                  replacement=data or self.data,
+                                  return_document=pymongo.ReturnDocument.AFTER,
+                                  **kwargs)
+
+    def update(self, data=None, **kwargs):
+        """A low-level `update` that bypasses the generated inserts."""
+        return self.collection\
+            .find_one_and_update(filter={'_id': self._id},
+                                 update=data or self.data,
+                                 return_document=pymongo.ReturnDocument.AFTER,
+                                 **kwargs)
 
     InsertError = InsertError
 
@@ -307,15 +328,9 @@ class SubRecord(metaclass=_prepare_sub_record):
 
     >>> class Sub(SubRecord):
     ...     template = {'a': None, 'b': None, 'c': None}
-    ...     required_properties = {'a', 'b'}
 
     >>> Sub(a=1, b=2)
     OrderedDict([('a', 1), ('b', 2), ('c', None)])
-    >>> Sub()   # doctest: +ELLIPSIS, +NORMALIZE_WHITESPACE
-    Traceback (most recent call last):
-      ...
-    ValueError: 'a', 'b' are required properties in
-    <Sub: OrderedDict([('a', None), ('b', None), ('c', None)])>
     """
 
     def __new__(cls, *, _raw_data={}, **kwargs):

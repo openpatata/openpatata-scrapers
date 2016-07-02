@@ -1,6 +1,7 @@
 aiohttp
 docopt
 jellyfish
+jsonschema
 lxml
 nose
 pandocfilters

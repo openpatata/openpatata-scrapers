@@ -16,7 +16,7 @@ class Bill(InsertableRecord):
                 'identifier': None,
                 'title': None,
                 'titles': []}
-    required_properties = ('_sources', 'identifier', 'title')
+    schema = 'bill'
 
     def generate__id(self):
         return self.data['identifier']
@@ -48,7 +48,6 @@ class Bill(InsertableRecord):
                     'committees_referred_to': None,
                     'sponsors': None,
                     'title': None}
-        required_properties = ('plenary_sitting_id', 'sponsors', 'title')
 
 
 class CommitteeReport(InsertableRecord):
@@ -62,7 +61,7 @@ class CommitteeReport(InsertableRecord):
                 'text': None,
                 'title': None,
                 'url': None}
-    required_properties = ('_sources', 'title', 'url')
+    schema = 'committee_report'
 
     def generate__id(self):
         return '_'.join((self.data['date_circulated'] or '_',
@@ -76,25 +75,23 @@ class CommitteeReport(InsertableRecord):
 class ContactDetails(SubRecord):
 
     template = {'type': None, 'value': None}
-    required_properties = ('type', 'value')
 
 
 class ElectoralDistrict(InsertableRecord):
 
     collection = default_db.electoral_districts
     template = {'name': {}}
+    schema = 'electoral_district'
 
 
 class Identifier(SubRecord):
 
     template = {'identifier': None, 'scheme': None}
-    required_properties = ('scheme',)
 
 
 class Link(SubRecord):
 
     template = {'note': {}, 'url': None}
-    required_properties = ('note', 'url')
 
 
 class MP(InsertableRecord):
@@ -111,8 +108,8 @@ class MP(InsertableRecord):
                 'links': [],
                 'name': None,
                 'other_names': [],
-                'place_of_origin': None,
                 'tenures': []}
+    schema = 'mp'
 
     def generate__id(self):
         return translit_slugify(self.data['name']['el'])
@@ -145,8 +142,6 @@ class MP(InsertableRecord):
         template = {'electoral_district_id': None,
                     'parliamentary_period_id': None,
                     'party_id': None}
-        required_properties = ('electoral_district_id',
-                               'parliamentary_period_id')
 
 
 class MultilingualField(SubRecord):
@@ -166,14 +161,12 @@ class ParliamentaryPeriod(InsertableRecord):
                 'number': {},
                 'start_date': None,
                 'end_date': None}
-    required_properties = ('number', 'start_date')
 
 
 class Party(InsertableRecord):
 
     collection = default_db.parties
     template = {'abbreviation': {}, 'name': {}}
-    required_properties = ('abbreviation', 'name')
 
 
 class PlenarySitting(InsertableRecord):
@@ -187,7 +180,7 @@ class PlenarySitting(InsertableRecord):
                 'parliamentary_period_id': None,
                 'session': None,
                 'sitting': None}
-    required_properties = ('_sources', 'date', 'parliamentary_period_id')
+    schema = 'plenary_sitting'
 
     def generate__id(self):
         data = map(self.data.get, ('date', 'parliamentary_period_id', 'session',
@@ -213,10 +206,12 @@ class PlenarySitting(InsertableRecord):
 
     class Link(SubRecord):
         template = {'url': None, 'type': None}
-        required_properties = ('url', 'type')
 
     class PlenaryAgenda(SubRecord):
         template = {'cap1': [], 'cap2': [], 'cap4': []}
+
+    class PlenaryAgendaItem(SubRecord):
+        template = {'bill_id': None}
 
 
 class Question(InsertableRecord):
@@ -230,8 +225,7 @@ class Question(InsertableRecord):
                 'heading': None,
                 'identifier': None,
                 'text': None}
-    required_properties = ('_position_on_page', '_sources', 'date', 'heading',
-                           'identifier', 'text')
+    schema = 'question'
 
     def generate__id(self):
         return '{}_{}'.format(self.data['identifier'],
