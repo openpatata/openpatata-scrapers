@@ -75,6 +75,10 @@ class ReconcileQuestionNames(Questions):
         print(output.getvalue())
 
 
+QUESTION_PREFIXES = ('Ερώτηση με αρ.', 'φΕρώτηση με αρ.', '-Ερώτηση με αρ.',
+                     'Περδίκη Ερώτηση με αρ.', 'Ερώτηση με 23.06.007.04.013')
+
+
 def demarcate_questions(url, html):
     """Pin down question boundaries."""
     heading = None  # <Element>
@@ -86,8 +90,7 @@ def demarcate_questions(url, html):
                       (HtmlElement('Ερώτηση με αρ.'),)):    # Sentinel
         e.text = clean_spaces(e.text_content())
         norm_text = ungarble_qh(e.text)
-        if norm_text.startswith(('Ερώτηση με αρ.',  'φΕρώτηση με αρ.',
-                                 '-Ερώτηση με αρ.', 'Περδίκη Ερώτηση με αρ.')):
+        if norm_text.startswith(QUESTION_PREFIXES):
             if heading is not None and body:
                 counter += 1
                 yield heading, body, footer, counter
@@ -106,7 +109,7 @@ def demarcate_questions(url, html):
             body.append(e)
 
 
-RE_HEADING = re.compile(r'Ερώτηση με αρ\. (?P<id>[\d\.]+)'
+RE_HEADING = re.compile(r'Ερώτηση με(?: αρ\.)? (?P<id>[\d\.]+)'
                         r'(?:,? ημερομηνίας| που .* (?:την|στις)) '
                         r'(?P<date>[\w ]+)')
 
