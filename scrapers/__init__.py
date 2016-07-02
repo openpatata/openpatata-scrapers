@@ -1,4 +1,10 @@
 
+import builtins
+import logging
+
+builtins.logger = logging.getLogger(__name__)
+
+
 class _cached_db:
 
     def __init__(self, fn):
