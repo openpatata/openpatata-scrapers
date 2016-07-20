@@ -225,11 +225,12 @@ def extract_contact_details(url, html, lang):
         contact_details = dict(zip(
             (clean_spaces(i.strip(': '), True)
              for i in contact_details.xpath('./strong/text()')),
-            (clean_spaces(i.strip(': '), True)
-             for i in ''.join(i.xpath('string()') if hasattr(i, 'xpath') else i
-                              for i in contact_details.xpath('./node()[not(self::strong)]')
-                              ).splitlines()
-             )))
+            filter(None,
+                   (clean_spaces(i.strip(': '), True)
+                    for i in ''.join(i.xpath('string()') if hasattr(i, 'xpath') else i
+                                     for i in contact_details.xpath('./node()[not(self::strong)]')
+                                     ).splitlines()
+             ))))
         return contact_details
 
 
