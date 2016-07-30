@@ -9,7 +9,6 @@ from pathlib import Path
 from jsonschema import Draft4Validator as Validator, FormatChecker
 import pymongo
 
-from .config import SCHEMAS
 from .io import YamlManager
 from .misc_utils import starfilter
 from .text_utils import _text_from_sp
@@ -111,18 +110,19 @@ class BaseRecord(metaclass=_prepare_record):
 class _prepare_insertable_record(_prepare_record):
 
     def __new__(cls, name, bases, cls_dict):
-        new_cls = super().__new__(
-            cls, name, bases,
-            {**cls_dict,
-             'template': {**cls_dict.pop('template', {}), '_id': None},
-             'schema': cls_dict.pop('schema', {})})
-        if isinstance(new_cls.schema, str):
-            new_cls.schema = YamlManager.load(str(Path(SCHEMAS,
-                                                       new_cls.schema + '.yaml'
-                                                       )))
-        new_cls.validator = Validator(new_cls.schema,
-                                      format_checker=FormatChecker(('email',)))
-        return new_cls
+        if name == 'InsertableRecord':
+            return super().__new__(cls, name, bases, cls_dict)
+
+        schema = cls_dict['schema']
+        if isinstance(schema, str):
+            schema = YamlManager.load(str(Path(__file__).parent
+                                          /'data'/'schemas'/(schema + '.yaml')))
+        return super().__new__(cls, name, bases,
+                               {**cls_dict,
+                                'schema': schema,
+                                'template': {**cls_dict['template'], '_id': None},
+                                'validator': Validator(schema, format_checker=
+                                                       FormatChecker(('email',)))})
 
 
 class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
