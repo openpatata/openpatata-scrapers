@@ -7,6 +7,7 @@ import itertools as it
 from pathlib import Path
 
 from jsonschema import Draft4Validator as Validator, FormatChecker
+from jsonschema.exceptions import ValidationError
 import pymongo
 
 from .io import YamlManager
@@ -311,6 +312,14 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                 '--collection=' + cls.collection.name,
                                 '--fields=' + ','.join(sorted(cls.template))))
         raise ValueError('Invalid format ' + repr(format))
+
+    @classmethod
+    def validate(cls):
+        for i in cls.collection.find():
+            try:
+                cls.validator.validate(i)
+            except ValidationError as e:
+                raise ValueError('Unable to validate ' + repr(i)) from e
 
     InsertError = InsertError
 
