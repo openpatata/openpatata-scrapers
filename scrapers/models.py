@@ -161,12 +161,14 @@ class ParliamentaryPeriod(InsertableRecord):
                 'number': {},
                 'start_date': None,
                 'end_date': None}
+    schema = 'parliamentary_period'
 
 
 class Party(InsertableRecord):
 
     collection = default_db.parties
     template = {'abbreviation': {}, 'name': {}}
+    schema = 'party'
 
 
 class PlenarySitting(InsertableRecord):
