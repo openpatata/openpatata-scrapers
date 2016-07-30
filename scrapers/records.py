@@ -302,11 +302,11 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                   return_document=pymongo.ReturnDocument.AFTER,
                                   **kwargs)
 
-    def update(self, data=None, **kwargs):
+    def update(self, update, **kwargs):
         """A low-level `update` that bypasses the generated inserts."""
         return self.collection\
             .find_one_and_update(filter={'_id': self._id},
-                                 update=data or self.data,
+                                 update=update,
                                  return_document=pymongo.ReturnDocument.AFTER,
                                  **kwargs)
 
