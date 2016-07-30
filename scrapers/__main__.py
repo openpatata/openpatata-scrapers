@@ -26,6 +26,7 @@ from pathlib import Path
 import textwrap
 
 from docopt import docopt, DocoptExit
+import pygit2
 
 from . import crawling, default_db, io, models, tasks
 
@@ -107,19 +108,33 @@ def dump(args):
 
 @_register
 def export(args):
-    """Usage: scrapers export [--format=<format>] <collection>
+    """Usage: scrapers export [--format=<format>] [--push]
 
     Options:
-        --format=<format>   Export format [default: csv]
+        --format=<format>   Export format [default: json]
         -h --help           Show this screen
     """
-    export_fns = {m.collection.name: m.export
-                  for m in models.__dict__.values()
-                  if tasks._is_subclass(m, models.InsertableRecord)}
+    repo = pygit2.Repository('data')
+    sign = pygit2.Signature('export-script',
+                            'c9af0c27360c4d2b@aa0e2d1360b8199c')
+    original_ref, export_ref = repo.head.name, 'refs/heads/export'
+    if 'export' not in repo.listall_branches():
+        repo.create_commit(export_ref, sign, sign, 'Create export branch',
+                           repo.TreeBuilder().write(), [])
+    repo.checkout(export_ref)
     try:
-        print(export_fns[args['<collection>']](args['--format']))
-    except KeyError:
-        raise DocoptExit('No collection {!r}'.format(args['<collection>']))
+        for model in (m for m in models.__dict__.values()
+                      if tasks._is_subclass(m, models.InsertableRecord)):
+            path = Path('data', model.collection.name + '.' + args['--format'])
+            print('Exporting {}...'.format(path.name))
+            with open(str(path), 'w') as file:
+                file.write(model.export(args['--format']))
+        repo.index.add_all()
+        repo.create_commit(export_ref, sign, sign,
+                           'Export data to ' + args['--format'].upper(),
+                           repo.index.write_tree(), [repo.head.target])
+    finally:
+        repo.checkout(original_ref)
 
 
 @_register('cache--clear')

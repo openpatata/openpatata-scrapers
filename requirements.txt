@@ -5,6 +5,7 @@ jsonschema
 lxml
 nose
 pandocfilters
+pygit2
 PyICU
 pymongo
 python-magic

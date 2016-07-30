@@ -224,19 +224,6 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         """
         return bool(self.collection.find_one(self._id))
 
-    @classmethod
-    def export(cls, format_='csv'):
-        if format_ == 'json':
-            return _text_from_sp(
-                ('mongoexport', '--jsonArray',
-                                '--db=' + cls.collection.database.name,
-                                '--collection=' + cls.collection.name))
-        return _text_from_sp(
-            ('mongoexport', '--type=' + format_,
-                            '--db=' + cls.collection.database.name,
-                            '--collection=' + cls.collection.name,
-                            '--fields=' + ','.join(sorted(cls.template))))
-
     def generate__id(self):
         """Override to create an `_id`."""
         raise NotImplementedError
@@ -309,6 +296,21 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                  update=update,
                                  return_document=pymongo.ReturnDocument.AFTER,
                                  **kwargs)
+
+    @classmethod
+    def export(cls, format):
+        if format == 'json':
+            return _text_from_sp(
+                ('mongoexport', '--jsonArray',
+                                '--db=' + cls.collection.database.name,
+                                '--collection=' + cls.collection.name))
+        elif format == 'csv':
+            return _text_from_sp(
+                ('mongoexport', '--type=' + format,
+                                '--db=' + cls.collection.database.name,
+                                '--collection=' + cls.collection.name,
+                                '--fields=' + ','.join(sorted(cls.template))))
+        raise ValueError('Invalid format ' + repr(format))
 
     InsertError = InsertError
 
