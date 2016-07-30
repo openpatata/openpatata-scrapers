@@ -96,10 +96,10 @@ class Crawler:
             return payload
 
     async def _decode_payload(self, url, payload):
-        DECODE_FUNCS = {b'application/msword': doc_to_text,
-                        b'application/pdf': pdf_to_text,
-                        b'application/vnd.openxmlformats-officedocument.'
-                        b'wordprocessingml.document': docx_to_json}
+        DECODE_FUNCS = {'application/msword': doc_to_text,
+                        'application/pdf': pdf_to_text,
+                        'application/vnd.openxmlformats-officedocument.'
+                        'wordprocessingml.document': docx_to_json}
 
         try:
             decode_func = DECODE_FUNCS[magic.from_buffer(payload, mime=True)]
