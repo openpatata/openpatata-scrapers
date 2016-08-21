@@ -82,6 +82,10 @@ properties:
           description: The corresponding value, e.g. a phone number or
             an email address.
           type: string
+        note:
+          type:
+          - string
+          - 'null'
       required:
       - type
       - value
