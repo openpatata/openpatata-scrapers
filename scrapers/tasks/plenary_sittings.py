@@ -616,7 +616,7 @@ class FirstReading(Task):
 
     async def __call__(self):
         url = 'https://api.morph.io/wfdd/cypriot-parliament-1r-scraper/data.json'
-        params = {'key': os.environ['MORPH_KEY'],
+        params = {'key': os.environ['MORPH_API_KEY'],
                   'query': 'SELECT * FROM first_reading'}
         return await self.crawler.get_payload(url, params=params)
 
