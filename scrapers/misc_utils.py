@@ -14,3 +14,12 @@ def starfilter(function, iterable):
     """
     i1, i2 = itertools.tee(iter(iterable))
     return itertools.compress(i2, itertools.starmap(function, i1))
+
+
+def is_subclass(v, cls):
+    """Check `v` is derived from `cls`.
+
+    The built-in `issubclass` considers a class to be its own subclass
+    and would return True for `issubclass(Task, Task)`, which we don't want.
+    """
+    return isinstance(v, type) and cls in v.__mro__[1:]

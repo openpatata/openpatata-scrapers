@@ -48,20 +48,12 @@ class _YamlDumper(yaml.CSafeDumper, _YamlRepresenter):
 class YamlManager:
 
     @staticmethod
-    def load(path):
+    def load_record(path):
         """Import a document from disk."""
         with open(path) as file:
-            doc = yaml.load(file.read(),
+            doc = yaml.load(file,
                             Loader=_YamlLoader)
             return doc
-
-    @classmethod
-    def load_record(cls, path, filename):
-        """Import a database record from disk."""
-        doc = cls.load(path)
-        if not doc.get('_id'):
-            doc['_id'] = filename
-        return doc
 
     @staticmethod
     def dump_record(doc, head):

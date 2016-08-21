@@ -9,9 +9,9 @@ README.
 Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
-    cache--clear   Clear the crawler's cache
+    clear-cache    Clear the crawler's cache
     dump           Dump documents in a collection as YAML
-    cache--dump    Dump the crawler's cache on disk
+    dump-cache     Dump the crawler's cache on disk
     export         Export a collection to CSV or JSON
     init           Populate the database
     run            Run a scraping task
@@ -21,14 +21,16 @@ Options:
     -v --verbose    Print error messages of all levels
 """
 
+import json
 import logging
 from pathlib import Path
+import subprocess
 import textwrap
 
 from docopt import docopt, DocoptExit
-import pygit2
 
 from . import crawling, default_db, io, models, tasks
+from .misc_utils import is_subclass
 
 
 def _register(fn, name=None):
@@ -59,8 +61,7 @@ def init(args):
              for d in map(Path, args['<from-folders>'] or ('./data/mps',))
              for f in d.glob('*.yaml'))
     for path, collection in files:
-        default_db[collection].insert_one(io.YamlManager.load_record(str(path),
-                                                                     path.stem))
+        default_db[collection].insert_one(io.YamlManager.load_record(str(path)))
 
 
 @_register
@@ -108,38 +109,39 @@ def dump(args):
 
 @_register
 def export(args):
-    """Usage: scrapers export [--format=<format>] [--push]
+    """Usage: scrapers export
+
+    Export the database as a JSON data package.
 
     Options:
-        --format=<format>   Export format [default: json]
         -h --help           Show this screen
     """
-    repo = pygit2.Repository('data')
-    sign = pygit2.Signature('export-script',
-                            'c9af0c27360c4d2b@aa0e2d1360b8199c')
-    original_ref, export_ref = repo.head.name, 'refs/heads/export'
-    if 'export' not in repo.listall_branches():
-        repo.create_commit(export_ref, sign, sign, 'Create export branch',
-                           repo.TreeBuilder().write(), [])
-    repo.checkout(export_ref)
-    try:
-        for model in (m for m in models.__dict__.values()
-                      if tasks._is_subclass(m, models.InsertableRecord)):
-            path = Path('data', model.collection.name + '.' + args['--format'])
-            print('Exporting {}...'.format(path.name))
-            with open(str(path), 'w') as file:
-                file.write(model.export(args['--format']))
-        repo.index.add_all()
-        repo.create_commit(export_ref, sign, sign,
-                           'Export data to ' + args['--format'].upper(),
-                           repo.index.write_tree(), [repo.head.target])
-    finally:
-        repo.checkout(original_ref)
+    def ǀ(cmd):
+        return subprocess.run('git -C data ' + cmd,
+                              check=True, shell=True, stdout=subprocess.PIPE)
+
+    assert ǀ('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
+    has_stash = ǀ('stash').stdout.strip() != b'No local changes to save'
+    ǀ('checkout export')
+
+    for _, model in models.registry:
+        print('Exporting {}...'.format(model.collection.name))
+        with Path('data', model.collection.name + '.json').open('w') as file:
+            file.write(model.export(format='json'))
+    with Path('data', 'datapackage.json').open('w') as file:
+        json.dump(models.registry.create_data_package(), file, indent=2)
+
+    ǀ('add .')
+    ǀ('commit --author "export-script <export@script>"'
+      '       --message "Export data to JSON"')
+    ǀ('checkout master')
+    if has_stash:
+        ǀ('stash pop')
 
 
-@_register('cache--clear')
-def clear_text_cache(args):
-    """Usage: scrapers cache--clear
+@_register('clear-cache')
+def clear_cache(args):
+    """Usage: scrapers clear-cache
 
     Clear the crawler's cache.
 
@@ -149,9 +151,9 @@ def clear_text_cache(args):
     crawling.Crawler.clear_text_cache()
 
 
-@_register('cache--dump')
+@_register('dump-cache')
 def dump_cache(args):
-    """Usage: scrapers cache--dump [<location>]
+    """Usage: scrapers dump-cache [<location>]
 
     Dump the crawler's cache at <location>.
 
@@ -169,7 +171,7 @@ def main():
         command = _register.__dict__[args['<command>']]
     except KeyError:
         raise DocoptExit('Available commands are: ' +
-                         '; '.join(sorted(_register.__dict__)))
+                         '; '.join(sorted(_register.__dict__))) from None
     else:
         args = docopt(command.__doc__,
                       argv=[args['<command>']] + args['<args>'])

@@ -4,8 +4,10 @@
 from pathlib import Path
 
 from . import default_db
-from .records import InsertableRecord, SubRecord
+from .records import InsertableRecord, SubRecord, RecordRegistry
 from .text_utils import translit_slugify
+
+registry = RecordRegistry()
 
 
 class Bill(InsertableRecord):
@@ -16,12 +18,13 @@ class Bill(InsertableRecord):
                 'identifier': None,
                 'title': None,
                 'titles': []}
+    registry = registry
     schema = 'bill'
 
     def generate__id(self):
         return self.data['identifier']
 
-    def generate_inserts(self, merge):
+    def generate_inserts(self, prior_data, merge):
         data = yield
         if not merge:
             yield {'$set': {**data, 'titles': [data['title']]}}
@@ -61,13 +64,14 @@ class CommitteeReport(InsertableRecord):
                 'text': None,
                 'title': None,
                 'url': None}
+    registry = registry
     schema = 'committee_report'
 
     def generate__id(self):
         return '_'.join((self.data['date_circulated'] or '_',
                          Path(self.data['url']).stem))
 
-    def generate_inserts(self, merge):
+    def generate_inserts(self, prior_data, merge):
         data = yield
         yield {'$set': data}
 
@@ -81,6 +85,7 @@ class ElectoralDistrict(InsertableRecord):
 
     collection = default_db.electoral_districts
     template = {'name': {}}
+    registry = registry
     schema = 'electoral_district'
 
 
@@ -109,12 +114,13 @@ class MP(InsertableRecord):
                 'name': None,
                 'other_names': [],
                 'tenures': []}
+    registry = registry
     schema = 'mp'
 
     def generate__id(self):
         return translit_slugify(self.data['name']['el'])
 
-    def generate_inserts(self, merge):
+    def generate_inserts(self, prior_data, merge):
         data = yield
         if not merge:
             yield {'$set': data}
@@ -123,6 +129,13 @@ class MP(InsertableRecord):
                    if i['scheme'] == 'http://www.wikidata.org/entity/'), None)
         if wd and wd['identifier']:
             yield {'$pull': {'identifiers': {'scheme': 'http://www.wikidata.org/entity/'}}}
+            _ = yield
+        new_cd = [(i['type'], i['value'])
+                  for i in data.get('contact_details', [])]
+        cd_to_remove = [i for i in prior_data['contact_details']
+                        if (i['type'], i['value']) in new_cd]
+        if cd_to_remove:
+            yield {'$pullAll': {'contact_details': cd_to_remove}}
             _ = yield
         new_data = {'$addToSet': {k: {'$each': data.pop(k, [])}
                                   for k, v in self.template.items()
@@ -137,6 +150,9 @@ class MP(InsertableRecord):
                                              'scheme': 'http://www.wikidata.org/entity/'}}}
         else:
             yield {'$setOnInsert': data}
+        data = yield
+        yield {'$set': {'contact_details': sorted(data['contact_details'],
+                                                  key=lambda i: (i['type'], i['value']))}}
 
     class Tenure(SubRecord):
         template = {'electoral_district_id': None,
@@ -161,6 +177,7 @@ class ParliamentaryPeriod(InsertableRecord):
                 'number': {},
                 'start_date': None,
                 'end_date': None}
+    registry = registry
     schema = 'parliamentary_period'
 
 
@@ -168,6 +185,7 @@ class Party(InsertableRecord):
 
     collection = default_db.parties
     template = {'abbreviation': {}, 'name': {}}
+    registry = registry
     schema = 'party'
 
 
@@ -182,6 +200,7 @@ class PlenarySitting(InsertableRecord):
                 'parliamentary_period_id': None,
                 'session': None,
                 'sitting': None}
+    registry = registry
     schema = 'plenary_sitting'
 
     def generate__id(self):
@@ -189,7 +208,7 @@ class PlenarySitting(InsertableRecord):
                                    'sitting'))
         return '_'.join(map(str, data))
 
-    def generate_inserts(self, merge):
+    def generate_inserts(self, prior_data, merge):
         data = yield
         if not merge:
             yield {'$set': data}
@@ -227,12 +246,13 @@ class Question(InsertableRecord):
                 'heading': None,
                 'identifier': None,
                 'text': None}
+    registry = registry
     schema = 'question'
 
     def generate__id(self):
         return '{}_{}'.format(self.data['identifier'],
                               self.data['_position_on_page'])
 
-    def generate_inserts(self, merge):
+    def generate_inserts(self, prior_data, merge):
         data = yield
         yield {'$set': data}

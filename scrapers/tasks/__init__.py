@@ -6,12 +6,7 @@ import itertools as it
 from pathlib import Path
 
 from ..crawling import Task
-
-
-def _is_subclass(v, cls):
-    # The built-in `issubclass` considers a class to be its own subclass
-    # and would return True for `issubclass(Task, Task)`, which we don't want
-    return isinstance(v, type) and cls in v.__mro__[1:]
+from ..misc_utils import is_subclass
 
 
 def _camel_to_snake(s):
@@ -30,4 +25,4 @@ TASKS = it.chain.from_iterable(zip(it.repeat(i.__name__.split('.')[-1]),
                                    i.__dict__.values())
                                for i in TASKS)
 TASKS = {':'.join((m, _camel_to_snake(v.__name__))): v
-         for m, v in TASKS if _is_subclass(v, Task)}
+         for m, v in TASKS if is_subclass(v, Task)}

@@ -3,6 +3,7 @@
 
 from collections import OrderedDict
 from copy import deepcopy
+import datetime as dt
 import itertools as it
 from pathlib import Path
 
@@ -79,6 +80,13 @@ class _prepare_record(type):
         return cls
 
 
+class RecordRegistry(list):
+
+    def create_data_package(self):
+        return _DataPackage(last_updated=dt.datetime.now().isoformat(),
+                            resources=[m._as_resource() for _, m in sorted(self)])
+
+
 class BaseRecord(metaclass=_prepare_record):
     """A base class for our records.
 
@@ -111,19 +119,22 @@ class BaseRecord(metaclass=_prepare_record):
 class _prepare_insertable_record(_prepare_record):
 
     def __new__(cls, name, bases, cls_dict):
-        if name == 'InsertableRecord':
+        if bases == (BaseRecord,):
             return super().__new__(cls, name, bases, cls_dict)
 
         schema = cls_dict['schema']
         if isinstance(schema, str):
-            schema = YamlManager.load(str(Path(__file__).parent
-                                          /'data'/'schemas'/(schema + '.yaml')))
-        return super().__new__(cls, name, bases,
-                               {**cls_dict,
-                                'schema': schema,
-                                'template': {**cls_dict['template'], '_id': None},
-                                'validator': Validator(schema, format_checker=
-                                                       FormatChecker(('email',)))})
+            schema = YamlManager.load_record(
+                str(Path(__file__).parent/'data'/'schemas'/(schema + '.yaml')))
+        kls = super().__new__(cls, name, bases,
+                              {**cls_dict,
+                               'schema': schema,
+                               'template': {**cls_dict['template'], '_id': None},
+                               'validator': Validator(schema, format_checker=
+                                                      FormatChecker(('email',)))})
+        if 'registry' in cls_dict:
+            cls_dict['registry'].append((name, kls))
+        return kls
 
 
 class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
@@ -151,7 +162,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         ...     def generate__id(self):
         ...         return 'insertable_test' \
 
-        ...     def generate_inserts(self, merge):
+        ...     def generate_inserts(self, prior_data, merge):
         ...         data = yield
         ...         yield {'$set': data}
 
@@ -229,7 +240,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         """Override to create an `_id`."""
         raise NotImplementedError
 
-    def generate_inserts(self, merge):
+    def generate_inserts(self, prior_data, merge):
         """Override to construct database inserts.
 
         `generate_inserts` is a coroutine called from within `self.insert`.
@@ -240,7 +251,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         Refer to <https://docs.mongodb.org/manual/reference/operator/update/>
         for the mongodb update syntax.  The simplest use case is:
 
-            def generate_inserts(self, merge):
+            def generate_inserts(self, prior_data, merge):
                 data = yield            # Grab the data;
                 yield {'$set': data}    # and yield an update
         """
@@ -256,14 +267,14 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         if not self._id:
             raise ValueError('No `_id` provided in ' + repr(self))
         new = not merge
-        orig_data = self.collection.find_one(self._id)
+        prior_data = self.collection.find_one(self._id)
         if new:
             self.delete()
             data = deepcopy(self.data)
         else:
             data = _compact(_unwrap(self)).data
 
-        inserts = self.generate_inserts(merge)
+        inserts = self.generate_inserts(prior_data, merge)
         for _ in inserts:
             data.pop('_id')
             insert = inserts.send(data)
@@ -276,8 +287,8 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         except:
             # Roll back the changes if validation has failed
             self.delete()
-            if orig_data:
-                self.update({'$set': orig_data}, upsert=True)
+            if prior_data:
+                self.update({'$set': prior_data}, upsert=True)
             raise
         self.data = data
         return data
@@ -297,6 +308,12 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                  update=update,
                                  return_document=pymongo.ReturnDocument.AFTER,
                                  **kwargs)
+
+    @classmethod
+    def _as_resource(cls):
+        return _DataPackage.Resource(name=cls.collection.name,
+                                     path=cls.collection.name + '.json',
+                                     schema=cls.schema)
 
     @classmethod
     def export(cls, format):
@@ -346,3 +363,17 @@ class SubRecord(metaclass=_prepare_sub_record):
 
     def __new__(cls, *, _raw_data={}, **kwargs):
         return _sort(cls._construct(_raw_data=_raw_data, **kwargs)).data
+
+
+class _DataPackage(SubRecord):
+
+    template = {'name': 'openpatata-data',
+                'last_updated': None,
+                'license': 'CC BY 4.0',
+                'resources': []}
+
+    class Resource(SubRecord):
+        template = {'name': None,
+                    'path': None,
+                    'format': 'json',
+                    'schema': None}
