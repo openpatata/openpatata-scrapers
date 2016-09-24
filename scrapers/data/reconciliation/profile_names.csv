@@ -1,63 +1,4 @@
 name,id
-ΚΥΠΡΙΑΝΟΥ Άντρος,kyprianou-antros
-ΚΥΡΙΑΚΙΔΟΥ Στέλλα,kyriakidou-stella
-ΚΩΝΣΤΑΝΤΙΝΟΥ Κώστας,konstantinou-kostas
-ΚΩΣΤΑ Κώστας,kosta-kostas
-ΛΕΩΝΙΔΟΥ Πανίκος,leonidou-panikos
-ΛΙΛΛΗΚΑΣ Γιώργος,lillikas-giorgos
-ΛΟΥΚΑΪΔΗΣ Γιώργος,loukaidis-giorgos
-MANTOBANH Αντωνέλλα,mantovani-antonella
-ΜΑΥΡΙΔΗΣ Μάριος,mavridis-marios
-ΜΑΥΡΟΥ Ελένη,mavrou-eleni
-ΜΑΧΤΕΣΙΑΝ Βαρτκές,machtesian-vartkes
-ΜΟΥΣΑΣ Γιαννάκης,mousas-giannakis
-ΜΟΥΣΙΟΥΤΤΑΣ Μαρίνος,mousiouttas-marinos
-ΜΥΛΩΝΑΣ Παύλος,mylonas-pavlos
-ΜΥΡΙΑΝΘΟΥΣ Ηλίας,myrianthous-ilias
-ΝΕΟΦΥΤΟΥ Αβέρωφ,neofytou-averof
-ΝΟΥΡΗΣ Νίκος,nouris-nikos
-ΟΡΦΑΝΙΔΗΣ Χρίστος,orfanidis-christos
-ΠΑΠΑΓΙΑΝΝΗΣ Λίνος,papagiannis-linos
-ΠΑΠΑΔΟΠΟΥΛΟΣ Γεώργιος,papadopoulos-georgios
-ΠΑΠΑΔΟΠΟΥΛΟΣ Νικόλας,papadopoulos-nikolas
-ΠΕΡΔΙΚΗΣ Γιώργος,perdikis-giorgos
-ΠΙΤΤΟΚΟΠΙΤΗΣ Χαράλαμπος,pittokopitis-charalampos
-ΠΡΟΚΟΠΙΟΥ Γεώργιος,prokopiou-georgios
-ΣΑΒΒΑ Ευανθία,savva-evanthia
-ΣΥΛΛΟΥΡΗΣ Δημήτρης,syllouris-dimitris
-ΑΔΑΜΟΥ Αδάμος,adamou-adamos
-ΑΡΙΣΤΕΙΔΟΥ Μαριέλλα,aristeidou-mariella
-ΒΟΤΣΗΣ Άγγελος,votsis-angelos
-ΓΕΩΡΓΙΟΥ Γεώργιος,georgiou-georgios
-ΓΕΩΡΓΙΟΥ Κ. Γιώργος,georgiou-k-giorgos
-ΓΕΩΡΓΙΟΥ T. Γιώργος,georgiou-t-giorgos
-ΓΙΩΡΓΑΛΛΑΣ Μιχάλης,giorgallas-michalis
-ΔΑΜΙΑΝΟΥ Άριστος,damianou-aristos
-ΔΗΜΗΤΡΙΟΥ Αννίτα,dimitriou-annita
-ΔΗΜΗΤΡΙΟΥ Δημήτρης,dimitriou-dimitris
-ΔΙΠΛΑΡΟΣ Ευθύμιος,diplaros-efthymios
-ΕΡΩΤΟΚΡΙΤΟΥ Α. Χριστιάνα,erotokritou-christiana
-ΕΥΣΤΑΘΙΟΥ Κωνσταντίνος (Κωστής),efstathiou-kostis
-ΖΑΧΑΡΙΟΥ Ζαχαρίας,zachariou-zacharias
-ΘΕΟΛΟΓΟΥ 'Αννα,theologou-anna
-ΘΕΟΠΕΜΠΤΟΥ Χαράλαμπος,theopemptou-charalampos
-ΚΑΡΟΥΛΛΑΣ Γιώργος,karoullas-giorgos
-ΚΑΣΙΝΗΣ Σόλων,kasinis-solon
-ΚΑΥΚΑΛΙΑΣ Αντρέας,kafkalias-antreas
-ΚΕΤΤΗΡΟΣ Νίκος,kettiros-nikos
-ΚΟΥΚΟΥΜΑ ΚΟΥΤΡΑ Σκεύη,koukouma-koutra-skevi
-ΚΟΥΛΙΑΣ Ζαχαρίας,koulias-zacharias
-ΚΟΥΛΛΑ Ονούφριος,koulla-onoufrios
-ΚΥΠΡΙΑΝΟΥ Ανδρέας,kyprianou-andreas
-ΣΙΖΟΠΟΥΛΟΣ Μαρίνος,sizopoulos-marinos
-ΣΤΑΥΡΟΥ Ελένη,stavrou-eleni
-ΣΤΕΦΑΝΟΥ Στέφανος,stefanou-stefanos
-ΤΖΙΟΒΑΝΗΣ Χριστάκης,tziovanis-christakis
-ΤΟΡΝΑΡΙΤΗΣ Νίκος,tornaritis-nikos
-ΦΑΚΟΝΤΗΣ Ανδρέας,fakontis-antreas
-ΧΑΡΑΛΑΜΠΙΔΟΥ Ειρήνη,charalampidou-eirini
-Δρ ΧΑΤΖΗΓΙΑΝΝΗΣ Κυριάκος,chatzigiannis-kyriakos
-ΧΡΙΣΤΟΥ Χρίστος,christou-christos
 Ομήρου Λ. Γιαννάκης,omirou-giannakis
 Αδάμου Αδάμος,adamou-adamos
 Αναστασιάδης Νίκος,anastasiadis-nikos
@@ -121,3 +62,66 @@ MANTOBANH Αντωνέλλα,mantovani-antonella
 Χαμπουλλάς Ευγένιος,champoullas-evgenios
 Δρ Χατζηγιάννης Κυριάκος,chatzigiannis-kyriakos
 Χριστοφόρου Λευτέρης,christoforou-lefteris
+Αντιπρόσωποι θρησκευτικών ομάδων,
+Χατζηρούσος Αντώνης,chatzirousos-antonis
+Μαχτεσιάν Βαρτκές,machtesian-vartkes
+Μαντοβάνη Μπενίτο Αντόνιο,mantovani-benito
+ΣΥΛΛΟΥΡΗΣ Δημήτρης,syllouris-dimitris
+ΑΔΑΜΟΥ Αδάμος,adamou-adamos
+ΑΡΙΣΤΕΙΔΟΥ Μαριέλλα,aristeidou-mariella
+ΒΟΤΣΗΣ Άγγελος,votsis-angelos
+ΓΕΩΡΓΙΟΥ Γεώργιος,georgiou-georgios
+ΓΕΩΡΓΙΟΥ Κ. Γιώργος,georgiou-k-giorgos
+ΓΕΩΡΓΙΟΥ T. Γιώργος,georgiou-t-giorgos
+ΓΙΩΡΓΑΛΛΑΣ Μιχάλης,giorgallas-michalis
+ΔΑΜΙΑΝΟΥ Άριστος,damianou-aristos
+ΔΗΜΗΤΡΙΟΥ Αννίτα,dimitriou-annita
+ΔΗΜΗΤΡΙΟΥ Δημήτρης,dimitriou-dimitris
+ΔΙΠΛΑΡΟΣ Ευθύμιος,diplaros-efthymios
+ΕΡΩΤΟΚΡΙΤΟΥ Α. Χριστιάνα,erotokritou-christiana
+ΕΥΣΤΑΘΙΟΥ Κωνσταντίνος (Κωστής),efstathiou-kostis
+ΖΑΧΑΡΙΟΥ Ζαχαρίας,zachariou-zacharias
+ΘΕΟΛΟΓΟΥ 'Αννα,theologou-anna
+ΘΕΟΠΕΜΠΤΟΥ Χαράλαμπος,theopemptou-charalampos
+ΚΑΡΟΥΛΛΑΣ Γιώργος,karoullas-giorgos
+ΚΑΣΙΝΗΣ Σόλων,kasinis-solon
+ΚΑΥΚΑΛΙΑΣ Αντρέας,kafkalias-antreas
+ΚΕΤΤΗΡΟΣ Νίκος,kettiros-nikos
+ΚΟΥΚΟΥΜΑ ΚΟΥΤΡΑ Σκεύη,koukouma-koutra-skevi
+ΚΟΥΛΙΑΣ Ζαχαρίας,koulias-zacharias
+ΚΟΥΛΛΑ Ονούφριος,koulla-onoufrios
+ΚΥΠΡΙΑΝΟΥ Ανδρέας,kyprianou-andreas
+ΚΥΠΡΙΑΝΟΥ Άντρος,kyprianou-antros
+ΚΥΡΙΑΚΙΔΟΥ Στέλλα,kyriakidou-stella
+ΚΩΝΣΤΑΝΤΙΝΟΥ Κώστας,konstantinou-kostas
+ΚΩΣΤΑ Κώστας,kosta-kostas
+ΛΕΩΝΙΔΟΥ Πανίκος,leonidou-panikos
+ΛΙΛΛΗΚΑΣ Γιώργος,lillikas-giorgos
+ΛΟΥΚΑΪΔΗΣ Γιώργος,loukaidis-giorgos
+ΜΑΥΡΙΔΗΣ Μάριος,mavridis-marios
+ΜΑΥΡΟΥ Ελένη,mavrou-eleni
+ΜΟΥΣΙΟΥΤΤΑΣ Μαρίνος,mousiouttas-marinos
+ΜΥΛΩΝΑΣ Παύλος,mylonas-pavlos
+ΜΥΡΙΑΝΘΟΥΣ Ηλίας,myrianthous-ilias
+ΝΕΟΦΥΤΟΥ Αβέρωφ,neofytou-averof
+ΝΟΥΡΗΣ Νίκος,nouris-nikos
+ΟΡΦΑΝΙΔΗΣ Χρίστος,orfanidis-christos
+ΠΑΠΑΓΙΑΝΝΗΣ Λίνος,papagiannis-linos
+ΠΑΠΑΔΟΠΟΥΛΟΣ Γεώργιος,papadopoulos-georgios
+ΠΑΠΑΔΟΠΟΥΛΟΣ Νικόλας,papadopoulos-nikolas
+ΠΕΡΔΙΚΗΣ Γιώργος,perdikis-giorgos
+ΠΙΤΤΟΚΟΠΙΤΗΣ Χαράλαμπος,pittokopitis-charalampos
+ΠΡΟΚΟΠΙΟΥ Γεώργιος,prokopiou-georgios
+ΣΑΒΒΑ Ευανθία,savva-evanthia
+ΣΙΖΟΠΟΥΛΟΣ Μαρίνος,sizopoulos-marinos
+ΣΤΑΥΡΟΥ Ελένη,stavrou-eleni
+ΣΤΕΦΑΝΟΥ Στέφανος,stefanou-stefanos
+ΤΖΙΟΒΑΝΗΣ Χριστάκης,tziovanis-christakis
+ΤΟΡΝΑΡΙΤΗΣ Νίκος,tornaritis-nikos
+ΦΑΚΟΝΤΗΣ Αντρέας,fakontis-antreas
+ΧΑΡΑΛΑΜΠΙΔΟΥ Ειρήνη,charalampidou-eirini
+Δρ ΧΑΤΖΗΓΙΑΝΝΗΣ Κυριάκος,chatzigiannis-kyriakos
+ΧΡΙΣΤΟΥ Χρίστος,christou-christos
+ΜΟΥΣΑΣ Γιαννάκης,mousas-giannakis
+ΜΑΧΤΕΣΙΑΝ Βαρτκές,machtesian-vartkes
+MANTOBANH Αντωνέλλα,mantovani-antonella
