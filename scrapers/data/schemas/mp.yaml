@@ -86,6 +86,10 @@ properties:
           type:
           - string
           - 'null'
+        parliamentary_period_id:
+          type:
+          - string
+          - 'null'
       required:
       - type
       - value
