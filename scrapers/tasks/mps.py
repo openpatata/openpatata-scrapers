@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ..crawling import Task
 from ..models import (ContactDetails, Identifier, Link,
-                       MP, MultilingualField, OtherName)
+                      MP, MultilingualField, OtherName)
 from ..reconciliation import pair_name
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
@@ -20,53 +20,72 @@ class MpProfiles(Task):
         NAMES = dict(it.islice(csv.reader(file), 1, None))
 
     async def __call__(self):
-        listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/186',
-                        'http://www.parliament.cy/easyconsole.cfm/id/2004')
+        listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/2004',
+                        'http://www.parliament.cy/easyconsole.cfm/id/2033',
+                        'http://www.parliament.cy/easyconsole.cfm/id/186',
+                        'http://www.parliament.cy/easyconsole.cfm/id/182')
 
-        mp_urls = await self.c.gather(map(self.process_multi_page_listing,
-                                          listing_urls))
-        mp_urls = tuple(it.chain.from_iterable(mp_urls))
-        return zip(
-            mp_urls,
-            await self.c.gather(self.c.get_html(u + '/lang/el') for u in mp_urls),
-            await self.c.gather(self.c.get_html(u + '/lang/en') for u in mp_urls))
+        mp_urls = await self.c.gather(self.process_multi_page_listing(u)
+                                      for u in listing_urls)
+        return await self.c.gather(self.process_mp(u, t)
+                                   for i in mp_urls for u, t in i)
 
     async def process_multi_page_listing(self, url):
         html = await self.c.get_html(url)
         pages = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
         if pages:
-            pages = {self.process_multi_page_page(
-                      url, form_data={'page': ''.join(filter(str.isdigit, p))})
-                     for p in pages}
-            return it.chain.from_iterable(await self.c.gather(pages))
+            mps = await self.c.gather(self.process_multi_page_page(
+                url, form_data={'page': ''.join(c for c in p
+                                                if c.isdigit())}) for p in pages)
+            mps = it.chain.from_iterable(mps)
         else:
-            return await self.process_multi_page_page(url)
+            mps = await self.process_multi_page_page(url)
+        return zip(mps,
+                   it.repeat({'182': '11', '186': '11', '2004': '10', '2033': '10'
+                              }[url.rpartition('/')[-1]]))
 
     async def process_multi_page_page(self, url, form_data=None):
-        html = await self.c.get_html(url, form_data=form_data,
-                                     request_method='post')
+        html = await self.c.get_html(url,
+                                     form_data=form_data, request_method='post')
         return html.xpath('//a[@class="h3Style"]/@href')
 
+    async def process_mp(self, url, term):
+        return url, await self.c.get_html(url + '/lang/el'), term
+
     def after(output):
-        for url, html_el, html_en in output:
-            birth_date, place_of_origin = extract_birth_details(url, html_el, 'el')
-            extractor = extract_contact_details(url, html_el, 'el')
-            contact_details = [ContactDetails(type=t, value=f(i))
-                                for l, t, d, f in CONTACT_DETAIL_SUBS
-                                if extractor.get(l)
-                                for i in extractor[l].split(d)]
-            email = next((i['value'] for i in contact_details if i['type'] == 'email'),
-                         None)
-            images = extract_images(html_el)
-            links = [Link(note=MultilingualField(**n), url=f(extractor[l], html_el))
-                                for l, n, d, f in LINK_SUBS if extractor.get(l)
-                                for i in extractor[l].split(d)]
-            name = clean_spaces(html_el.xpath('string(//h1)'))
+        for url, html, term in output:
+            name = clean_spaces(html.xpath('string(//h1)'))
             name = MultilingualField(el=name, en=translit_elGrek2Latn(name),
                                      tr=translit_el2tr(name))
-            other_names = [OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
-                                     note="Official spelling in the 'en' locale;"
-                                          " possibly anglicised")]
+            if not MpProfiles.NAMES.get(name['el']):
+                logger.warning('Skipping ' + url)
+                continue
+
+            extractor = extract_contact_details(url, html, 'el')
+
+            birth_date, place_of_origin = extract_birth_details(url, html, 'el')
+            contact_details = [ContactDetails(type=t, value=clean_spaces(f(i), True),
+                                              parliamentary_period_id=term)
+                               for l, t, d, f in CONTACT_DETAIL_SUBS if extractor.get(l)
+                               for i in split_contact_details(extractor[l], d)]
+            email = None
+            for i in contact_details:
+                if (((i['type'] == 'fax' or i['type'] == 'voice') and
+                     '22 407' in i['value']) or
+                    (i['type'] == 'email' and
+                     i['value'].endswith('@parliament.cy')) or
+                    (i['type'] == 'address' and
+                     'Βουλή των Αντιπροσώπων' in i['value'])):
+                    i['note'] = 'parliament'
+            email = next((i['value'] for i in contact_details
+                          if i['type'] == 'email' and
+                             i.get('note') == 'parliament' and
+                             i['parliamentary_period_id'] == '11'),
+                         None)
+            images = extract_images(html)
+            links = [Link(note=MultilingualField(**n), url=f(extractor[l], html))
+                     for l, n, d, f in LINK_SUBS if extractor.get(l)
+                     for i in extractor[l].split(d)]
 
             mp = MP(_id=MpProfiles.NAMES.get(name['el']),
                     _sources=[url],
@@ -75,9 +94,11 @@ class MpProfiles(Task):
                     email=email,
                     image=[*images, None][0],
                     images=images,
-                    links=links,
+                    # links=links,
                     # name=name,
-                    # other_names=other_names,
+                    # other_names=[OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
+                    #                        note="Official spelling in the 'en' locale;"
+                    #                             " possibly anglicised")],
                     place_of_origin=MultilingualField(el=place_of_origin))
             mp.insert(merge=mp.exists)
 
@@ -141,8 +162,10 @@ class ContactInfo(Task):
             voice = '(+357) {} {}'.format(voice[:2], voice[2:])
             mp = MP(_id=ContactInfo.NAMES[mp_name],
                     _sources=['http://www.parliament.cy/easyconsole.cfm/id/185'],
-                    contact_details=[ContactDetails(type='email', value=email),
-                                     ContactDetails(type='voice', value=voice)],
+                    contact_details=[ContactDetails(type='email', value=email,
+                                                    note='parliament'),
+                                     ContactDetails(type='voice', value=voice,
+                                                    note='parliament')],
                     email=email)
             try:
                 mp.insert(mp.exists)
@@ -214,10 +237,10 @@ def extract_birth_details(url, html, lang):
 def extract_contact_details(url, html, lang):
     heading = {'el': 'Στοιχεία επικοινωνίας', 'en': 'Contact info'}[lang]
     try:
-        contact_details = next(iter(html.xpath(
-            '//p[contains(strong/text(), "{}")]/following-sibling::p'
-            .format(heading))))
-    except StopIteration:
+        contact_details, = html.xpath(
+            '//p[contains(strong/text(), "{}")]/following-sibling::p[1]'
+            .format(heading))
+    except ValueError:
         logger.error("Could not extract contact details in '{}/lang/{}'"
                      .format(url, lang))
         return {}
@@ -253,11 +276,18 @@ def extract_homepage(url, html):
         return 'http://{}/'.format(url.rstrip('/'))
 
 
+def split_contact_details(s, delimiters):
+    for d in delimiters:
+        if d in s:
+            return s.split(d)
+    return [s]
+
+
 CONTACT_DETAIL_SUBS = (
-    ('Διεύθυνση', 'address', ' / ', lambda v: v),
-    ('Τηλέφωνο', 'voice', ', ', lambda v: '(+357) ' + v.replace('(+357) ', '')),
-    ('Τηλεομοιότυπο', 'fax', ', ', lambda v: '(+357) ' + v.replace('(+357) ', '')),
-    ('Ηλεκτρονικό ταχυδρομείο', 'email', ', ', lambda v: v),)
+    ('Διεύθυνση', 'address', '/', lambda v: v),
+    ('Τηλέφωνο', 'voice', ',', lambda v: '(+357) ' + v.replace('(+357) ', '')),
+    ('Τηλεομοιότυπο', 'fax', ',', lambda v: '(+357) ' + v.replace('(+357) ', '')),
+    ('Ηλεκτρονικό ταχυδρομείο', 'email', ';,', lambda v: v),)
 
 LINK_SUBS = (
     ('Διαδικτυακός τόπος',
