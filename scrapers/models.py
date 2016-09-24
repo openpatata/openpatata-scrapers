@@ -130,10 +130,10 @@ class MP(InsertableRecord):
         if wd and wd['identifier']:
             yield {'$pull': {'identifiers': {'scheme': 'http://www.wikidata.org/entity/'}}}
             _ = yield
-        new_cd = [(i['type'], i['value'])
+        new_cd = [(i['type'], i['value'], i.get('parliamentary_period_id'))
                   for i in data.get('contact_details', [])]
         cd_to_remove = [i for i in prior_data['contact_details']
-                        if (i['type'], i['value']) in new_cd]
+                        if (i['type'], i['value'], i.get('parliamentary_period_id')) in new_cd]
         if cd_to_remove:
             yield {'$pullAll': {'contact_details': cd_to_remove}}
             _ = yield
