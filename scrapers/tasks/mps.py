@@ -68,7 +68,6 @@ class MpProfiles(Task):
                                               parliamentary_period_id=term)
                                for l, t, d, f in CONTACT_DETAIL_SUBS if extractor.get(l)
                                for i in split_contact_details(extractor[l], d)]
-            email = None
             for i in contact_details:
                 if (((i['type'] == 'fax' or i['type'] == 'voice') and
                      '22 407' in i['value']) or

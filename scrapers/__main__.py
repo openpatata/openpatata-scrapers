@@ -9,12 +9,9 @@ README.
 Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
-    clear-cache    Clear the crawler's cache
-    dump           Dump documents in a collection as YAML
-    dump-cache     Dump the crawler's cache on disk
-    export         Export a collection to CSV or JSON
-    init           Populate the database
-    run            Run a scraping task
+    cache     Manage the crawler's cache
+    data      Manage the scraper data
+    tasks     Run a scraping task
 
 Options:
     -h --help       Show this screen
@@ -30,11 +27,9 @@ import textwrap
 from docopt import docopt, DocoptExit
 
 from . import crawling, default_db, io, models, tasks
-from .misc_utils import is_subclass
 
 
 def _register(fn, name=None):
-    """Super simple registry and registrar."""
     if isinstance(fn, str):
         return lambda v: _register(v, name=fn)
     fn.__doc__ = fn.__doc__.partition('\n')
@@ -44,14 +39,42 @@ def _register(fn, name=None):
     return fn
 
 
-@_register
-def init(args):
-    """Usage: scrapers init [--keep-db] [<from-folders> ...]
+def _exec_command(args, *, subcommand=None):
+    try:
+        command = _register.__dict__[
+            ' '.join(filter(None, [subcommand, args['<command>']]))]
+    except KeyError:
+        raise DocoptExit('Unknown command')
+    else:
+        args = docopt(command.__doc__,
+                      argv=list(filter(None, [subcommand, args['<command>']])) +
+                            args['<args>'])
+        command(args)
+
+
+@_register('data')
+def manage_data(args):
+    """Usage: scrapers data <command> [<args> ...]
+
+    Commands:
+        load      Populate the database
+        unload    Dump documents in a collection as YAML
+        export    Export the database as a JSON data package
+
+    Options:
+        -h --help       Show this screen
+    """
+    _exec_command(docopt(manage_data.__doc__), subcommand='data')
+
+
+@_register('data load')
+def load_data(args):
+    """Usage: scrapers data load [--keep-db] [<from-folders> ...]
 
     Populate the database <from-folders>, defaulting to just './data/mps'.
 
     Options:
-        --keep-db       Don't drop the database before importing
+        -k --keep-db    Don't drop the database before importing
         -h --help       Show this screen
     """
     if not args['--keep-db']:
@@ -64,41 +87,22 @@ def init(args):
         default_db[collection].insert_one(io.YamlManager.load_record(str(path)))
 
 
-@_register
-def run(args):
-    """Usage: scrapers run [-d] <task>
+@_register('data unload')
+def unload_data(args):
+    """Usage: scrapers data unload [--location=<location>] [<collections> ...]
 
-    Run a specified scraper task.
-
-    Options:
-        -d --debug      Print asyncio debugging messages to `stderr`
-        -h --help       Show this screen
-    """
-    if args['<task>'] not in tasks.TASKS:
-        raise DocoptExit('\n'.join(['Available tasks are: '] +
-                                   ['\t' + i
-                                    for i in textwrap
-                                     .wrap('; '.join(sorted(tasks.TASKS)))] +
-                                   ['']))
-    crawling.Crawler(debug=args['--debug'])(tasks.TASKS[args['<task>']])
-
-
-@_register
-def dump(args):
-    """Usage: scrapers dump [--location=<location>] (<collections> ...)
-
-    Dump a <collection> (table) at <location>, defaulting to './data-new'.
+    Dump <collections>, defaulting to all, at <location>.
 
     Options:
-        --location=<location>   Path on disk where to gently deposit the data
-                                    [default: ./data-new]
+        --location=<location>   Path on disk to dump the data  [default: ./data-new]
         -h --help               Show this screen
     """
-    for collection in args['<collections>']:
+    for collection in (args['<collections>'] or default_db.collection_names()):
         collection = default_db[collection]
         if collection.count() == 0:
             raise DocoptExit('Collection {!r} is empty'
                              .format(collection.full_name))
+        print('Unloading {!r}...'.format(collection.name))
 
         head = Path(args['--location'])/collection.name
         if not head.exists():
@@ -107,13 +111,14 @@ def dump(args):
             io.YamlManager.dump_record(document, str(head))
 
 
-@_register
-def export(args):
-    """Usage: scrapers export
+@_register('data export')
+def export_data(args):
+    """Usage: scrapers data export [-p]
 
     Export the database as a JSON data package.
 
     Options:
+        -p --push           Push changes to remote repo
         -h --help           Show this screen
     """
     def ǀ(cmd):
@@ -125,7 +130,7 @@ def export(args):
     ǀ('checkout export')
 
     for _, model in models.registry:
-        print('Exporting {}...'.format(model.collection.name))
+        print('Exporting {!r}...'.format(model.collection.name))
         with Path('data', model.collection.name + '.json').open('w') as file:
             file.write(model.export(format='json'))
     with Path('data', 'datapackage.json').open('w') as file:
@@ -134,48 +139,52 @@ def export(args):
     ǀ('add .')
     ǀ('commit --author "export-script <export@script>"'
       '       --message "Export data to JSON"')
+    if args['--push']:
+        ǀ('push')
     ǀ('checkout master')
     if has_stash:
         ǀ('stash pop')
 
 
-@_register('clear-cache')
-def clear_cache(args):
-    """Usage: scrapers clear-cache
+@_register('tasks')
+def run_task(args):
+    """Usage: scrapers tasks run [-d] <task>
 
-    Clear the crawler's cache.
+    Run a specified scraper task.
+
+    Options:
+        -d --debug      Print `asyncio` debugging messages to `stderr`
+        -h --help       Show this screen
+    """
+    if args['<task>'] not in tasks.TASKS:
+        raise DocoptExit('Available tasks are: ' +
+                         '\n'.join(' ' * len('Available tasks are: ') + i
+                                    for i in sorted(tasks.TASKS)).strip())
+    crawling.Crawler(debug=args['--debug'])(tasks.TASKS[args['<task>']])
+
+
+@_register('cache')
+def manage_cache(args):
+    """\
+    Usage: scrapers cache clear
+           scrapers cache dump [<location>]
+
+    Clear or dump the crawler's cache.
 
     Options:
         -h --help       Show this screen
     """
-    crawling.Crawler.clear_text_cache()
-
-
-@_register('dump-cache')
-def dump_cache(args):
-    """Usage: scrapers dump-cache [<location>]
-
-    Dump the crawler's cache at <location>.
-
-    Options:
-        -h --help       Show this screen
-    """
-    crawling.Crawler.dump_cache(args['<location>'])
+    if args['clear']:
+        crawling.Crawler.clear_text_cache()
+    elif args['dump']:
+        crawling.Crawler.dump_cache(args['<location>'])
 
 
 def main():
     args = docopt(__doc__, options_first=True)
     if args['--verbose']:
         logging.basicConfig(level=logging.DEBUG)
-    try:
-        command = _register.__dict__[args['<command>']]
-    except KeyError:
-        raise DocoptExit('Available commands are: ' +
-                         '; '.join(sorted(_register.__dict__))) from None
-    else:
-        args = docopt(command.__doc__,
-                      argv=[args['<command>']] + args['<args>'])
-        command(args)
+    _exec_command(args)
 
 if __name__ == '__main__':
     main()

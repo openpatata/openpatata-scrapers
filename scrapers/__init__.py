@@ -1,6 +1,9 @@
 
 import builtins
+from collections import OrderedDict
 import logging
+
+from pymongo import MongoClient
 
 builtins.logger = logging.getLogger(__name__)
 
@@ -19,9 +22,6 @@ class _cached_db:
 class Db:
 
     def get(uri=None):
-        from collections import OrderedDict
-        from pymongo import MongoClient
-
         if not uri:
             from . import config
             uri = config.DB
@@ -29,6 +29,7 @@ class Db:
             .get_default_database()
 
     @_cached_db
-    def default_db(): pass
+    def default_db():
+        pass
 
 default_db = Db.default_db

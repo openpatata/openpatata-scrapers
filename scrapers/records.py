@@ -289,7 +289,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
             self.delete()
             if prior_data:
                 self.update({'$set': prior_data}, upsert=True)
-            raise
+            raise ValueError('Failed to validate ' + repr(self))
         self.data = data
         return data
 
