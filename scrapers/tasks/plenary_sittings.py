@@ -24,16 +24,19 @@ from ..text_utils import \
 class PlenaryAgendas(Task):
     """Parse plenary agendas into bill and plenary-sitting records."""
 
+    ignore = ['http://www.parliament.cy/images/media/redirectfile/07-1407016 -  agenda .pdf']
+
     async def process_agenda_index(self):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/290'
         html = await self.c.get_html(url)
 
         agenda_urls = await self.c.gather(
-            {self.process_multi_page_listing(href)
-             for href in html.xpath('//a[@class="h3Style"]/@href')})
-        agenda_urls = it.chain.from_iterable(agenda_urls)
-        return await self.c.gather({self.process_agenda(href)
-                                    for href in agenda_urls})
+            self.process_multi_page_listing(href)
+            for href in html.xpath('//a[@class="h3Style"]/@href'))
+        agenda_urls = set(it.chain.from_iterable(agenda_urls))
+        return await self.c.gather(self.process_agenda(href)
+                                   for href in agenda_urls
+                                   if not any(i in href for i in self.ignore))
 
     __call__ = process_agenda_index
 
@@ -160,8 +163,8 @@ def extract_id_and_title(url, item):
 
     # Concatenate the rows into a title string, extract the number,
     # and throw out the junk
-    id_, title = id_.group(1), \
-        RE_ITEM_NO.sub('', RE_TITLE_OTHER.sub('', item)).rstrip('. ')
+    id_ = id_.group(1)
+    title = RE_ITEM_NO.sub('', RE_TITLE_OTHER.sub('', item)).rstrip('. ')
     if id_ and title:
         return id_, title
     else:
@@ -283,20 +286,24 @@ def parse_pdf_agenda(url, text):
 class PlenaryTranscripts(Task):
     """Extract MPs in attendance at plenary sittings from transcripts."""
 
+    ignore = ['praktiko2011-06-30.doc']
+
     with (Path(__file__).parent.parent
           /'data'/'reconciliation'/'attendance_names.csv').open() as file:
         NAMES = dict(it.islice(csv.reader(file), 1, None))
 
     async def process_transcript_listings(self):
         listing_urls = ('http://www2.parliament.cy/parliamentgr/008_01_01/' + v
-                        for v in ('008_01_IE.htm',
+                        for v in ('008_01_IAA.htm',
+                                  '008_01_IES-3.htm',
+                                  '008_01_IE.htm',
                                   '008_01_ID.htm',
                                   '008_01_IDS.htm',
                                   '008_01_IC.htm',
                                   '008_01_IES.htm',
                                   '008_01_IB.htm',
                                   '008_01_IA.htm',
-                                #   '008_01_TES.htm',
+                                  '008_01_TES.htm',
                                   '008_01_TE.htm',
                                   '008_01_TD.htm',
                                   '008_01_TC.htm',
@@ -312,12 +319,12 @@ class PlenaryTranscripts(Task):
                                   '008_01_ZE.htm',
                                   '008_01_ZD.htm',))
 
-        transcript_urls = \
-            await self.c.gather({self.process_transcript_listing(url)
-                                 for url in listing_urls})
+        transcript_urls = await self.c.gather(self.process_transcript_listing(url)
+                                              for url in set(listing_urls))
         transcript_urls = it.chain.from_iterable(transcript_urls)
-        return await self.c.gather({self.process_transcript(url)
-                                    for url in transcript_urls})
+        return await self.c.gather(self.process_transcript(url)
+                                   for url in set(transcript_urls)
+                                   if not any(i in url for i in self.ignore))
 
     __call__ = process_transcript_listings
 
@@ -576,7 +583,7 @@ def extract_pandoc_items(url, list_):
 
 
 def extract_pandoc_cap2(url, content):
-    tables = filter(_locate_cap2_table, json.loads(content)[1])
+    tables = filter(_locate_cap2_table, json.loads(content)['blocks'])
     try:
         table = next(tables)
     except StopIteration:
