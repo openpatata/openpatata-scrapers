@@ -48,7 +48,7 @@ def _exec_command(args, *, subcommand=None):
     else:
         args = docopt(command.__doc__,
                       argv=list(filter(None, [subcommand, args['<command>']])) +
-                            args['<args>'])
+                           args['<args>'])
         command(args)
 
 
@@ -113,12 +113,13 @@ def unload_data(args):
 
 @_register('data export')
 def export_data(args):
-    """Usage: scrapers data export [-p]
+    """Usage: scrapers data export [-p] [-s]
 
     Export the database as a JSON data package.
 
     Options:
         -p --push           Push changes to remote repo
+        -s --stay           Stay on export branch
         -h --help           Show this screen
     """
     def ǀ(cmd):
@@ -141,9 +142,10 @@ def export_data(args):
       '       --message "Export data to JSON"')
     if args['--push']:
         ǀ('push')
-    ǀ('checkout master')
-    if has_stash:
-        ǀ('stash pop')
+    if not args['--stay']:
+        ǀ('checkout master')
+        if has_stash:
+            ǀ('stash pop')
 
 
 @_register('tasks')
@@ -159,7 +161,7 @@ def run_task(args):
     if args['<task>'] not in tasks.TASKS:
         raise DocoptExit('Available tasks are: ' +
                          '\n'.join(' ' * len('Available tasks are: ') + i
-                                    for i in sorted(tasks.TASKS)).strip())
+                                   for i in sorted(tasks.TASKS)).strip())
     crawling.Crawler(debug=args['--debug'])(tasks.TASKS[args['<task>']])
 
 
