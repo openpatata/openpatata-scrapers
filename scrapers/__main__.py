@@ -42,13 +42,14 @@ def _register(fn, name=None):
 def _exec_command(args, *, subcommand=None):
     try:
         command = _register.__dict__[
-            ' '.join(filter(None, [subcommand, args['<command>']]))]
+            ' '.join(i for i in [subcommand, args['<command>']] if i)]
     except KeyError:
         raise DocoptExit('Unknown command')
     else:
         args = docopt(command.__doc__,
-                      argv=list(filter(None, [subcommand, args['<command>']])) +
-                           args['<args>'])
+                      argv=([i for i in [subcommand, args['<command>']] if i] +
+                            args['<args>']),
+                      options_first=not subcommand)
         command(args)
 
 
@@ -64,7 +65,7 @@ def manage_data(args):
     Options:
         -h --help       Show this screen
     """
-    _exec_command(docopt(manage_data.__doc__), subcommand='data')
+    _exec_command(args, subcommand='data')
 
 
 @_register('data load')
