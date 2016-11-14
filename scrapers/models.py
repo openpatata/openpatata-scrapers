@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import default_db
 from .records import InsertableRecord, SubRecord, RecordRegistry
-from .text_utils import translit_slugify
+from .text_utils import date2dato, translit_slugify
 
 registry = RecordRegistry()
 
@@ -204,9 +204,10 @@ class PlenarySitting(InsertableRecord):
     schema = 'plenary_sitting'
 
     def generate__id(self):
-        data = map(self.data.get, ('date', 'parliamentary_period_id', 'session',
-                                   'sitting'))
-        return '_'.join(map(str, data))
+        date = date2dato(self.data['date']).date().isoformat()
+        data = [self.data.get(i) for i in ('parliamentary_period_id', 'session',
+                                           'sitting')]
+        return '_'.join(map(str, [date] + data))
 
     def generate_inserts(self, prior_data, merge):
         data = yield

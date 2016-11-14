@@ -18,7 +18,7 @@ from ..models import Bill, MP, PlenarySitting as PS
 from ..reconciliation import pair_name
 from ..text_utils import \
     (apply_subs, clean_spaces, date2dato, pandoc_json_to, parse_long_date,
-     TableParser, ungarble_qh)
+     TableParser, translit_unaccent_lc, ungarble_qh)
 
 
 class PlenaryAgendas(Task):
@@ -286,47 +286,21 @@ def parse_pdf_agenda(url, text):
 class PlenaryTranscripts(Task):
     """Extract MPs in attendance at plenary sittings from transcripts."""
 
-    ignore = ['praktiko2011-06-30.doc']
+    ignore = ['praktiko2002-07.04parartima.doc', 'praktiko2011-06-30.doc']
 
     with (Path(__file__).parent.parent
           /'data'/'reconciliation'/'attendance_names.csv').open() as file:
         NAMES = dict(it.islice(csv.reader(file), 1, None))
 
-    async def process_transcript_listings(self):
-        listing_urls = ('http://www2.parliament.cy/parliamentgr/008_01_01/' + v
-                        for v in ('008_01_IAA.htm',
-                                  '008_01_IES-3.htm',
-                                  '008_01_IE.htm',
-                                  '008_01_ID.htm',
-                                  '008_01_IDS.htm',
-                                  '008_01_IC.htm',
-                                  '008_01_IES.htm',
-                                  '008_01_IB.htm',
-                                  '008_01_IA.htm',
-                                  '008_01_TES.htm',
-                                  '008_01_TE.htm',
-                                  '008_01_TD.htm',
-                                  '008_01_TC.htm',
-                                  '008_01_TB.htm',
-                                  '008_01_TA.htm',
-                                  '008_01_HES.htm',
-                                  '008_01_HE.htm',
-                                  '008_01_HD.htm',
-                                  '008_01_HC.htm',
-                                  '008_01_HB.htm',
-                                  '008_01_HA.htm',
-                                  '008_01_ZES.htm',
-                                  '008_01_ZE.htm',
-                                  '008_01_ZD.htm',))
+    async def __call__(self):
+        html = await self.c.get_html('http://www2.parliament.cy/parliamentgr/008_01.htm')
 
         transcript_urls = await self.c.gather(self.process_transcript_listing(url)
-                                              for url in set(listing_urls))
+                                              for url in html.xpath('//a[starts-with(@href, "008_01_01")]/@href'))
         transcript_urls = it.chain.from_iterable(transcript_urls)
         return await self.c.gather(self.process_transcript(url)
                                    for url in set(transcript_urls)
                                    if not any(i in url for i in self.ignore))
-
-    __call__ = process_transcript_listings
 
     async def process_transcript_listing(self, url):
         html = await self.c.get_html(url)
@@ -340,9 +314,9 @@ class PlenaryTranscripts(Task):
         for url, text, heading, date, cap2, bills in \
                 filter(None, (parse_transcript(*t) for t in output)):
             attendees = filter(None,
-                               map(lambda v: PlenaryTranscripts.NAMES.get(v) or
-                                    logger.error('No match found for ' + repr(v)),
-                                   extract_attendees(url, text, heading, date)))
+                               ((PlenaryTranscripts.NAMES.get(v) or
+                                 logger.error('No match found for ' + repr(v)))
+                                for v in extract_attendees(url, text, heading, date)))
             plenary_sitting = \
                 PS(_sources=[url],
                    agenda=PS.PlenaryAgenda(cap2=cap2),
@@ -362,8 +336,7 @@ class PlenaryTranscripts(Task):
                                              title=bill.title)
                 except ValueError:
                     # Discard likely malformed bills
-                    logger.error('Unable to parse {!r} into a bill'
-                                 .format(bill))
+                    logger.error('Unable to parse {!r} into a bill'.format(bill))
                     continue
 
                 bill = Bill(_sources=[url], actions=[submit],
@@ -388,12 +361,12 @@ class ReconcileAttendanceNames(PlenaryTranscripts):
 
 
 # http://www.parliament.cy/easyconsole.cfm/id/194
-PRESIDENTS = ((((1991, 5, 30), (1996,  5, 26)),  'Γαλανός Αλέξης'),
-              (((1996, 6,  6), (2001, 12, 19)),  'Κυπριανού Σπύρος'),
-              (((2001, 6,  7), (2008,  2, 28)),  'Χριστόφιας Δημήτρης'),
-              (((2008, 3,  6), (2011,  4, 22)),  'Κάρογιαν Μάριος'),
-              (((2011, 6,  2), (2016,  4, 14)),  'Ομήρου Γιαννάκης'),
-              (((2016, 6,  8), dt.date.today()), 'Συλλούρης Δημήτρης'),)
+PRESIDENTS = (([(1991, 5, 30), (1996,  5, 26)],  'Γαλανός Αλέξης'),
+              ([(1996, 6,  6), (2001, 12, 19)],  'Κυπριανού Σπύρος'),
+              ([(2001, 6,  7), (2008,  2, 28)],  'Χριστόφιας Δημήτρης'),
+              ([(2008, 3,  6), (2011,  4, 22)],  'Κάρογιαν Μάριος'),
+              ([(2011, 6,  2), (2016,  4, 14)],  'Ομήρου Γιαννάκης'),
+              ([(2016, 6,  8), dt.date.today()], 'Συλλούρης Δημήτρης'),)
 PRESIDENTS = tuple(((dt.date(*s) + dt.timedelta(days=1),
                      dt.date(*e) + dt.timedelta(days=1) if isinstance(e, tuple) else e),
                     {name})
@@ -430,21 +403,17 @@ ATTENDEE_SUBS = (('|', ' '),
 
 
 def extract_attendees(url, text, heading, date):
-    if 'praktiko2002-07.04parartima.doc' in url:
-        return ()
     # Split at page breaks 'cause the columns will have likely shifted
     # and strip off leading whitespace
-    _, _, attendee_table = apply_subs(text, ATTENDEE_SUBS).rpartition('🌮')
-    attendee_table, _, _ = attendee_table.partition('🌯')
-    attendee_table = ('\n'.join(l.lstrip() for l in s.splitlines())
-                      for s in attendee_table.split('\x0c'))
-
-    attendees = set(filter(lambda i: bool(i) and not i.isdigit(),
+    *_, attendees = apply_subs(text, ATTENDEE_SUBS).rpartition('🌮')
+    attendees, *_ = attendees.partition('🌯')
+    attendees = ('\n'.join(l.lstrip() for l in s.splitlines())
+                 for s in attendees.split('\x0c'))
+    attendees = set(filter(lambda i: i and not i.isdigit(),
                            (clean_spaces(a, medial_newlines=True)
-                            for t in attendee_table
+                            for t in attendees
                             for a in TableParser(t).values)))
-    # The President's not listed among the attendees
-    if 'ΠΡΟΕΔΡΟΣ:' in heading:
+    if 'ΠΡΟΕΔΡΟΣ:' in heading:  # The President's not listed among the attendees
         attendees = attendees | select_president(date)
     return sorted(attendees)
 
@@ -595,6 +564,24 @@ def extract_pandoc_cap2(url, content):
         return next(zip(*items)), AgendaItems(url, items).bills_and_regs
 
 
+def p_to_24(hour, p):
+    if p == 'μ':
+        if hour < 12:
+            hour += 12
+    elif hour == 12:
+        hour = 0
+    return hour
+
+
+time_match = re.compile(r'ωρα\s+εναρξης:\s*'
+                        r'(?P<h>\d{1,2})[.:](?P<m>\d{2})\s+(?P<p>[πμ])')
+
+def extract_start_time(heading):
+    h, m, p = time_match.search(translit_unaccent_lc(heading)).groups()
+    return (date2dato(parse_long_date(heading)) +
+            dt.timedelta(hours=p_to_24(int(h), p), minutes=int(m))).isoformat()
+
+
 def parse_transcript(url, func, content):
     if func == 'docx_to_json':
         text = pandoc_json_to(content, 'plain')
@@ -604,8 +591,8 @@ def parse_transcript(url, func, content):
     heading = clean_spaces(text[:(text.find('ΠΡΟΕΔΡ') + 9)],
                            medial_newlines=True)
     try:
-        date = parse_long_date(heading)
-    except ValueError as e:
+        date = extract_start_time(heading)
+    except Exception as e:
         logger.error('{}; skipping {!r}'.format(e, url))
         return
 
@@ -629,18 +616,18 @@ class FirstReading(Task):
 
     def after(output):
         docs = json.loads(output.decode())
-        docs = it.groupby(sorted(docs, key=lambda i: i['date_tabled']),
-                          key=lambda i: i['date_tabled'])
+        docs = ((d, tuple(i)) for i in
+                it.groupby(sorted(docs, key=lambda i: i['date_tabled']),
+                           key=lambda i: i['date_tabled']))
         for date, items in docs:
-            if PS.collection.count({'date': date}) != 1:
+            if PS.collection.count({'date': re.compile(date)}) != 1:
                 logger.error('No single match found for ' + repr(date))
                 continue
-            items = tuple(items)
-            ps = PS(**{**PS.collection.find_one({'date': date}),
-                       '_sources': [FirstReading.remote_scraper],
-                       'agenda': PS.PlenaryAgenda(cap2=[i['number']
-                                                        for i in items])})
-            ps.insert(merge=True)
+
+            PS(_id=PS.collection.find_one({'date': re.compile(date)})['_id'],
+               _sources=[FirstReading.remote_scraper],
+               agenda=PS.PlenaryAgenda(cap2=[i['number'] for i in items])
+               ).insert(merge=True)
 
             for item in items:
                 bill = Bill(_sources=[FirstReading.remote_scraper],
