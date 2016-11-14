@@ -323,7 +323,10 @@ def parse_long_date(date_string, plenary=False,
 
 def date2dato(date):
     """Convert a clear-text ISO date into a `datetime.date` object."""
-    return datetime.datetime.strptime(date, '%Y-%m-%d').date()
+    try:
+        return datetime.datetime.strptime(date, '%Y-%m-%d')
+    except ValueError:
+        return datetime.datetime.strptime(date, '%Y-%m-%dT%H:%M:%S')
 
 
 def clean_spaces(text, medial_newlines=False,
