@@ -42,14 +42,6 @@ properties:
         mp_id:
           description: The `id` of the attending MP.
           type: string
-    not:
-      enum:
-      - true
-  date:
-    description: >
-      The date the plenary was held on, in the ISO format (YYYY-MM-DD).
-    type: string
-    regex: ^[0-9]{4}(-[0-9]{2}){0,2}$
   links:
     description: >
       Links to relevant documents.  Either the source of the agenda or
@@ -99,13 +91,18 @@ properties:
     - ordinary
     - extraordinary
     - special
+  start_date:
+    description: >
+      The date the plenary was held on, in the ISO format (YYYY-MM-DD).
+    type: string
+    regex: ^[0-9]{4}(-[0-9]{2}){0,2}$
 required:
 - _id
 - _sources
 - agenda
 - attendees
-- date
 - links
 - parliamentary_period_id
 - session
 - sitting
+- start_date

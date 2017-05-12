@@ -113,7 +113,7 @@ class BaseRecord(metaclass=_prepare_record):
         self.data.update(kwargs)
 
     def __repr__(self):
-        return '<{}: {!r}>'.format(self.__class__.__name__, self.data)
+        return f'<{self.__class__.__name__}: {self.data!r}>'
 
 
 class _prepare_insertable_record(_prepare_record):
@@ -124,8 +124,8 @@ class _prepare_insertable_record(_prepare_record):
 
         schema = cls_dict['schema']
         if isinstance(schema, str):
-            schema = YamlManager.load_record(
-                str(Path(__file__).parent/'data'/'schemas'/(schema + '.yaml')))
+            schema = YamlManager.load_record(Path(__file__).parent
+                                             /'data'/'schemas'/(schema + '.yaml'))
         kls = super().__new__(cls, name, bases,
                               {**cls_dict,
                                'schema': schema,
@@ -265,7 +265,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         be inserted unless it already exists in the database.
         """
         if not self._id:
-            raise ValueError('No `_id` provided in ' + repr(self))
+            raise ValueError(f'No `_id` provided in {self!r}')
         new = not merge
         prior_data = self.collection.find_one(self._id)
         if new:
@@ -280,8 +280,8 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
             insert = inserts.send(data)
             data = self.update(insert, upsert=new)
             if not data:
-                raise InsertError('Unable to insert or merge ' + repr(self) +
-                                  ' with operation ' + repr(insert))
+                raise InsertError(f'Unable to insert or merge {self!r}'
+                                  f' with operation {insert!r}')
         try:
             self.validator.validate(data)
         except:
@@ -289,7 +289,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
             self.delete()
             if prior_data:
                 self.update({'$set': prior_data}, upsert=True)
-            raise ValueError('Failed to validate ' + repr(self))
+            raise ValueError(f'Failed to validate {self!r}')
         self.data = data
         return data
 
@@ -312,8 +312,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
     @classmethod
     def _as_resource(cls):
         return _DataPackage.Resource(name=cls.collection.name,
-                                     path=cls.collection.name + '.json',
-                                     schema=cls.schema)
+                                     path=cls.collection.name + '.json')
 
     @classmethod
     def export(cls, format):
@@ -328,7 +327,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                 '--db=' + cls.collection.database.name,
                                 '--collection=' + cls.collection.name,
                                 '--fields=' + ','.join(sorted(cls.template))))
-        raise ValueError('Invalid format ' + repr(format))
+        raise ValueError(f'Invalid format {format!r}')
 
     @classmethod
     def validate(cls):
@@ -336,7 +335,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
             try:
                 cls.validator.validate(i)
             except ValidationError as e:
-                raise ValueError('Unable to validate ' + repr(i)) from e
+                raise ValueError(f'Unable to validate {i!r}') from e
 
     InsertError = InsertError
 

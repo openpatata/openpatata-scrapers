@@ -104,16 +104,13 @@ class MP(InsertableRecord):
     collection = default_db.mps
     template = {'_sources': [],
                 'birth_date': None,
-                'contact_details': [],
-                'email': None,
                 'gender': None,
                 'identifiers': [],
                 'image': None,
                 'images': [],
-                'links': [],
                 'name': None,
                 'other_names': [],
-                'tenures': []}
+                'memberships': []}
     registry = registry
     schema = 'mp'
 
@@ -130,13 +127,13 @@ class MP(InsertableRecord):
         if wd and wd['identifier']:
             yield {'$pull': {'identifiers': {'scheme': 'http://www.wikidata.org/entity/'}}}
             _ = yield
-        new_cd = [(i['type'], i['value'], i.get('parliamentary_period_id'))
-                  for i in data.get('contact_details', [])]
-        cd_to_remove = [i for i in prior_data['contact_details']
-                        if (i['type'], i['value'], i.get('parliamentary_period_id')) in new_cd]
-        if cd_to_remove:
-            yield {'$pullAll': {'contact_details': cd_to_remove}}
-            _ = yield
+        # new_cd = [(i['type'], i['value'], i.get('parliamentary_period_id'))
+        #           for i in data.get('contact_details', [])]
+        # cd_to_remove = [i for i in prior_data['contact_details']
+        #                 if (i['type'], i['value'], i.get('parliamentary_period_id')) in new_cd]
+        # if cd_to_remove:
+        #     yield {'$pullAll': {'contact_details': cd_to_remove}}
+        #     _ = yield
         new_data = {'$addToSet': {k: {'$each': data.pop(k, [])}
                                   for k, v in self.template.items()
                                   if isinstance(v, list)}}
@@ -150,14 +147,18 @@ class MP(InsertableRecord):
                                              'scheme': 'http://www.wikidata.org/entity/'}}}
         else:
             yield {'$setOnInsert': data}
-        data = yield
-        yield {'$set': {'contact_details': sorted(data['contact_details'],
-                                                  key=lambda i: (i['type'], i['value']))}}
+        # data = yield
+        # yield {'$set': {'contact_details': sorted(data['contact_details'],
+        #                                           key=lambda i: (i['type'], i['value']))}}
 
-    class Tenure(SubRecord):
+    class TermOfOffice(SubRecord):
         template = {'electoral_district_id': None,
                     'parliamentary_period_id': None,
-                    'party_id': None}
+                    'party_id': None,
+                    'start_date': None,
+                    'end_date': None,
+                    'contact_details': [],
+                    'links': []}
 
 
 class MultilingualField(SubRecord):
@@ -195,16 +196,16 @@ class PlenarySitting(InsertableRecord):
     template = {'_sources': [],
                 'agenda': {},
                 'attendees': [],
-                'date': None,
                 'links': [],
                 'parliamentary_period_id': None,
                 'session': None,
-                'sitting': None}
+                'sitting': None,
+                'start_date': None}
     registry = registry
     schema = 'plenary_sitting'
 
     def generate__id(self):
-        date = date2dato(self.data['date']).date().isoformat()
+        date = date2dato(self.data['start_date']).date().isoformat()
         data = [self.data.get(i) for i in ('parliamentary_period_id', 'session',
                                            'sitting')]
         return '_'.join(map(str, [date] + data))
@@ -251,8 +252,7 @@ class Question(InsertableRecord):
     schema = 'question'
 
     def generate__id(self):
-        return '{}_{}'.format(self.data['identifier'],
-                              self.data['_position_on_page'])
+        return f'{self.data["identifier"]}_{self.data["_position_on_page"]}'
 
     def generate_inserts(self, prior_data, merge):
         data = yield

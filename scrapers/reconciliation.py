@@ -1,4 +1,8 @@
 
+import csv
+import itertools as it
+from pathlib import Path
+
 import jellyfish
 
 from .models import MP, MultilingualField
@@ -15,12 +19,12 @@ def pair_name(name, names_and_ids, existing_names):
     try:
         _, (_, selection) = options[int(input('''\
 
-Select one of the following for {!r}.
+Select one of the following for {name!r}.
 Press Enter to select the first option and ^C and Enter to skip or
 ^C again to exit.
 
-{}
-'''.format(name, '\n'.join(map(repr, options)))) or 0)]
+{options}
+'''.format(name=name, options='\n'.join(map(repr, options)))) or 0)]
     except KeyboardInterrupt:
         if input('''\
 
@@ -32,3 +36,8 @@ Create record?  [y/N]
             mp.insert()
             selection = mp._id
     return name, selection
+
+
+def load_pairings(filename):
+    with open(Path(__file__).parent/'data'/'reconciliation'/filename) as file:
+        return dict(it.islice(csv.reader(file), 1, None))

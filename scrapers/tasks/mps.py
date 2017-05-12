@@ -3,21 +3,20 @@ import csv
 from io import StringIO
 import itertools as it
 import json
-from pathlib import Path
 
 from ..crawling import Task
 from ..models import (ContactDetails, Identifier, Link,
                       MP, MultilingualField, OtherName)
-from ..reconciliation import pair_name
+from ..reconciliation import pair_name, load_pairings
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
 
 
 class MpProfiles(Task):
 
-    with (Path(__file__).parent.parent
-          /'data'/'reconciliation'/'profile_names.csv').open() as file:
-        NAMES = dict(it.islice(csv.reader(file), 1, None))
+    DISTRICTS = load_pairings('district_names.csv')
+    NAMES = load_pairings('profile_names.csv')
+    PARTIES = load_pairings('party_names.csv')
 
     async def __call__(self):
         listing_urls = ('http://www.parliament.cy/easyconsole.cfm/id/2004',
@@ -50,56 +49,51 @@ class MpProfiles(Task):
         return html.xpath('//a[@class="h3Style"]/@href')
 
     async def process_mp(self, url, term):
-        return url, await self.c.get_html(url + '/lang/el'), term
+        return url, await self.c.get_html(f'{url}/lang/el'), term
 
-    def after(output):
-        for url, html, term in output:
-            name = clean_spaces(html.xpath('string(//h1)'))
-            name = MultilingualField(el=name, en=translit_elGrek2Latn(name),
-                                     tr=translit_el2tr(name))
-            if not MpProfiles.NAMES.get(name['el']):
-                logger.warning('Skipping ' + url)
-                continue
+    def parse_item(url, html, term):
+        name = clean_spaces(html.xpath('string(//h1)'))
+        name = MultilingualField(el=name,
+                                 en=translit_elGrek2Latn(name),
+                                 tr=translit_el2tr(name))
 
-            extractor = extract_contact_details(url, html, 'el')
+        extractor = extract_contact_details(url, html, 'el')
 
-            birth_date, place_of_origin = extract_birth_details(url, html, 'el')
-            contact_details = [ContactDetails(type=t, value=clean_spaces(f(i), True),
-                                              parliamentary_period_id=term)
-                               for l, t, d, f in CONTACT_DETAIL_SUBS if extractor.get(l)
-                               for i in split_contact_details(extractor[l], d)]
-            for i in contact_details:
-                if (((i['type'] == 'fax' or i['type'] == 'voice') and
-                     '22 407' in i['value']) or
-                    (i['type'] == 'email' and
-                     i['value'].endswith('@parliament.cy')) or
-                    (i['type'] == 'address' and
-                     'Βουλή των Αντιπροσώπων' in i['value'])):
-                    i['note'] = 'parliament'
-            email = next((i['value'] for i in contact_details
-                          if i['type'] == 'email' and
-                             i.get('note') == 'parliament' and
-                             i['parliamentary_period_id'] == '11'),
-                         None)
-            images = extract_images(html)
-            links = [Link(note=MultilingualField(**n), url=f(extractor[l], html))
-                     for l, n, d, f in LINK_SUBS if extractor.get(l)
-                     for i in extractor[l].split(d)]
+        birth_date, place_of_origin = extract_birth_details(url, html, 'el')
 
-            mp = MP(_id=MpProfiles.NAMES.get(name['el']),
-                    _sources=[url],
-                    birth_date=birth_date,
-                    contact_details=contact_details,
-                    email=email,
-                    image=[*images, None][0],
-                    images=images,
-                    # links=links,
-                    # name=name,
-                    # other_names=[OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
-                    #                        note="Official spelling in the 'en' locale;"
-                    #                             " possibly anglicised")],
-                    place_of_origin=MultilingualField(el=place_of_origin))
-            mp.insert(merge=mp.exists)
+        district, party = html.xpath('string(//div[@class = "articleBox"]/p[1])').splitlines()
+        district = district.rpartition(' ')[-1]
+
+        contact_details = [ContactDetails(type=t, value=clean_spaces(f(i), True))
+                           for l, t, d, f in CONTACT_DETAIL_SUBS if extractor.get(l)
+                           for i in split_contact_details(extractor[l], d)]
+        for i in contact_details:
+            if (((i['type'] == 'fax' or i['type'] == 'voice') and
+                 '22 407' in i['value']) or
+                (i['type'] == 'email' and
+                 i['value'].endswith('@parliament.cy')) or
+                (i['type'] == 'address' and
+                 'Βουλή των Αντιπροσώπων' in i['value'])):
+                i['note'] = 'parliament'
+        links = [Link(note=MultilingualField(**n), url=f(extractor[l], html))
+                 for l, n, d, f in LINK_SUBS if extractor.get(l)
+                 for i in extractor[l].split(d)]
+
+        mp = MP(_id=MpProfiles.NAMES.get(name['el']),
+                _sources=[url],
+                birth_date=birth_date,
+                email=email,
+                images=extract_images(html),
+                # name=name,
+                # other_names=[OtherName(name=clean_spaces(html_en.xpath('string(//h1)')),
+                #                        note="Official spelling in the 'en' locale")],
+                memberships=[MP.TermOfOffice(electoral_district_id=...,
+                                             parliamentary_period_id=term,
+                                             party_id=...,
+                                             contact_details=contact_details,
+                                             links=links)],
+                place_of_origin=MultilingualField(el=place_of_origin))
+        mp.insert(merge=mp.exists)
 
 
 class ReconcileProfileNames(MpProfiles):
@@ -130,8 +124,7 @@ class WikidataIds(Task):
             wd = Identifier(identifier=extract_id(p, 'wikidata'),
                             scheme='http://www.wikidata.org/entity/')
             mp = MP(_id=extract_id(p, 'openpatata'), identifiers=[wd])
-            logger.info('Updating identifiers of {!r} with {!r}'
-                        .format(mp._id, mp.data['identifiers']))
+            logger.info(f'Updating identifiers of {mp._id!r} with {mp.data["identifiers"]!r}')
             mp.insert(merge=mp.exists)
 
 
@@ -143,9 +136,7 @@ def extract_id(person, scheme):
 
 class ContactInfo(Task):
 
-    with (Path(__file__).parent.parent
-          /'data'/'reconciliation'/'contact_names.csv').open() as file:
-        NAMES = dict(it.islice(csv.reader(file), 1, None))
+    NAMES = load_pairings('contact_names.csv')
 
     async def __call__(self):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/185'
@@ -154,11 +145,10 @@ class ContactInfo(Task):
     def after(output):
         for mp_name, _, voice, email in extract_contact_rows(output):
             if not ContactInfo.NAMES.get(mp_name):
-                logger.warning('{!r} not found in `NAMES`; skipping'
-                               .format(mp_name))
+                logger.warning(f'{mp_name!r} not found in `NAMES`; skipping')
                 continue
             voice = ''.join(voice.split())
-            voice = '(+357) {} {}'.format(voice[:2], voice[2:])
+            voice = f'(+357) {voice[:2]} {voice[2:]}'
             mp = MP(_id=ContactInfo.NAMES[mp_name],
                     _sources=['http://www.parliament.cy/easyconsole.cfm/id/185'],
                     contact_details=[ContactDetails(type='email', value=email,
@@ -169,7 +159,7 @@ class ContactInfo(Task):
             try:
                 mp.insert(mp.exists)
             except mp.InsertError:
-                logger.warning('Unable to insert ' + repr(mp))
+                logger.warning(f'Unable to insert {mp!r}')
 
 
 class ReconcileContactNames(ContactInfo):
@@ -211,9 +201,8 @@ LABELS = {
 
 
 def extract_items(html, lang, *items):
-    return html.xpath('//p[{}]/text()'
-                      .format(' or '.join('contains(strong/text(), "{}")'
-                              .format(LABELS[lang][i]) for i in items)))
+    return html.xpath(f'''//p[{' or '.join(f'contains(strong/text(), "{LABELS[lang][i]}")'
+                                           for i in items)}]/text()''')
 
 
 def extract_birth_details(url, html, lang):
@@ -224,24 +213,22 @@ def extract_birth_details(url, html, lang):
         try:
             place_of_origin, birth_date = data.split(',')
         except ValueError:
-            logger.error('No birth date found in ' + repr(url))
+            logger.error(f'No birth date found in {url!r}')
             place_of_origin = data
         else:
             birth_date = parse_long_date(birth_date)
     else:
-        logger.error('No birth date or place of origin found in ' + repr(url))
+        logger.error(f'No birth date or place of origin found in {url!r}')
     return birth_date, place_of_origin
 
 
 def extract_contact_details(url, html, lang):
     heading = {'el': 'Στοιχεία επικοινωνίας', 'en': 'Contact info'}[lang]
     try:
-        contact_details, = html.xpath(
-            '//p[contains(strong/text(), "{}")]/following-sibling::p[1]'
-            .format(heading))
+        contact_details, = html.xpath(f'//p[contains(strong/text(), "{heading}")]'
+                                       '/following-sibling::p[1]')
     except ValueError:
-        logger.error("Could not extract contact details in '{}/lang/{}'"
-                     .format(url, lang))
+        logger.error(f"Could not extract contact details in '{url}/lang/{lang}'")
         return {}
     else:
         contact_details = dict(zip(
@@ -257,22 +244,21 @@ def extract_contact_details(url, html, lang):
 
 
 def extract_images(html):
-    images = tuple(it.chain(html.xpath('//a[@class = "lightview"]/@href'),
-                            html.xpath('//a[contains(@href, "/assets/image/imageoriginal")]'
-                                       '/@href')))
+    images = html.xpath('//a[@class = "lightview"]/@href | '
+                        '//a[contains(@href, "/assets/image/imageoriginal")]/@href')
     images = sorted(set(images), key=images.index)
     return images
 
 
 def extract_homepage(url, html):
     try:
-        url, = html.xpath('//a[contains(string(.), "{}")]/@href'.format(url))
+        url, = html.xpath(f'//a[contains(string(.), "{url}")]/@href')
         url = url.rstrip('/') + '/'
         return url
     except ValueError:
         if url.startswith('http'):
             return url
-        return 'http://{}/'.format(url.rstrip('/'))
+        return f'http://{url.rstrip("/")}/'
 
 
 def split_contact_details(s, delimiters):

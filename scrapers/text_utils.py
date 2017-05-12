@@ -266,8 +266,8 @@ def parse_short_date(
     try:
         return '{}-{:02d}-{:02d}'.format(*map(int, reversed(date.groups())))
     except AttributeError:
-        raise ValueError(
-            'Unable to disassemble date in {!r}'.format(date_string)) from None
+        raise ValueError(f'Unable to disassemble date in {date_string!r}') \
+            from None
 
 
 _EL_MONTHS = dict(zip(
@@ -311,14 +311,13 @@ def parse_long_date(date_string, plenary=False,
     try:
         d, m, y = _RE_DATE.search(date_string).groups()
     except AttributeError:
-        raise ValueError(
-            'Unable to disassemble date in {!r}'.format(date_string)) from None
+        raise ValueError(f'Unable to disassemble date in {date_string!r}') \
+            from None
     try:
         return '{}-{:02d}-{:02d}'.format(
             *map(int, (y, _EL_MONTHS[translit_unaccent_lc(m)], d)))
     except KeyError:
-        raise ValueError(
-            'Malformed month in date {!r}'.format(date_string)) from None
+        raise ValueError(f'Malformed month in date {date_string!r}') from None
 
 
 def date2dato(date):
@@ -373,8 +372,8 @@ def truncate_slug(slug, max_length=100, sep='-'):
     while len(slug) > max_length:
         slug, _, _ = slug.rpartition(sep)
     if not slug:
-        raise ValueError('Initial component of slug {!r} is longer than'
-                         ' `max_length` {!r}'.format(orig_slug, max_length))
+        raise ValueError(f'Initial component of slug {orig_slug!r} is longer than'
+                         f' `max_length` {max_length!r}')
     return slug
 
 

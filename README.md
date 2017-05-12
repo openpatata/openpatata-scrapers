@@ -1,21 +1,19 @@
-*openpatata-scrapers* scrapes the Cypriot parliament website.  It collects and
-structures information on MPs, plenary sittings, bills and regulations, and
-written questions, placing it in a database, a copy of which is maintained over
-at [*openpatata-data*](http://github.com/openpatata/openpatata-data).
+*openpatata-scrapers* scrapes the Cypriot parliament's website.  It collects and
+structures information relating to MPs, plenary sittings, bills and regulations,
+and written questions.  The proximate goal of the project is to facilitate the
+reuse of parliamentary data by transforming them into a machine-readable and
+standardised format.  The data are made available at
+[*openpatata-data*](http://github.com/openpatata/openpatata-data), updated
+semi-regularly.
 
-The proximate goal of this project is to allow for the multiform presentation
-and analysis of parliament data.  The ultimate goal is for the Cypriot public
-to gain a better understanding of the activities of their elected
-representatives.
+## Usage
 
-*openpatata-scrapers* is written in Python (3.5+).  It requires antiword, icu4c,
+*openpatata-scrapers* is written in Python 3.6.  It requires antiword, icu4c,
 libmagic, MongoDB (2.6+), pandoc, pdftotext (Poppler) and a \*nix environment.
-
-## Usage instructions
 
 ### Getting set up
 
-Install the external dependencies listed above using your package manager of
+Install the external dependencies (listed above) using your package manager of
 choice.  Afterwards:
 
 ```bash
@@ -50,12 +48,7 @@ To (over)write the data on disk:
 python3 -m scrapers data unload --location=data plenary_sittings
 ```
 
-Run `python3 -m scrapers -h` to view all available options.
-
-## Contributing
-
-Additions and improvements are welcome.  You can start by peering at the issues
-here on GitHub.
+Run `python3 -m scrapers -h` to view all available commands.
 
 ## License
 

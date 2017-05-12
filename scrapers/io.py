@@ -3,6 +3,7 @@
 
 from collections import OrderedDict
 import os
+from pathlib import Path
 
 import yaml
 
@@ -59,10 +60,10 @@ class YamlManager:
     def dump_record(doc, head):
         """Save a database record to disk."""
         try:
-            path = os.path.join(head, doc['_id']) + '.yaml'
+            doc_id = doc['_id']
         except KeyError:
-            raise DumpError('No `_id` in ' + repr(doc)) from None
-        with open(path, 'w') as file:
+            raise DumpError(f'No `_id` in {doc!r}') from None
+        with open(Path(head)/f'{doc_id}.yaml', 'w') as file:
             yaml.dump(doc, file,
                       Dumper=_YamlDumper,
                       allow_unicode=True, default_flow_style=False)

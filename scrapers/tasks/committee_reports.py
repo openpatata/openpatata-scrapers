@@ -49,8 +49,8 @@ def parse_committee_report(url, date, item):
     try:
         link = item.xpath('.//a[1]/@href')[0]
     except IndexError:
-        logger.error('Unable to extract link from {} in {!r}'
-                     .format(item.text_content(), url))
+        logger.error(f'Unable to extract link from '
+                     f'{item.text_content()} in {url!r}')
         return
 
     committee_report = CommitteeReport(_sources=[url],

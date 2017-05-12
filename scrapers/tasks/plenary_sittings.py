@@ -7,7 +7,6 @@ from io import StringIO
 import itertools as it
 import json
 import os
-from pathlib import Path
 import re
 
 import pandocfilters
@@ -15,7 +14,7 @@ import pandocfilters
 from ..crawling import Task
 from ..misc_utils import starfilter
 from ..models import Bill, MP, PlenarySitting as PS
-from ..reconciliation import pair_name
+from ..reconciliation import pair_name, load_pairings
 from ..text_utils import \
     (apply_subs, clean_spaces, date2dato, pandoc_json_to, parse_long_date,
      TableParser, translit_unaccent_lc, ungarble_qh)
@@ -30,9 +29,8 @@ class PlenaryAgendas(Task):
         url = 'http://www.parliament.cy/easyconsole.cfm/id/290'
         html = await self.c.get_html(url)
 
-        agenda_urls = await self.c.gather(
-            self.process_multi_page_listing(href)
-            for href in html.xpath('//a[@class="h3Style"]/@href'))
+        agenda_urls = await self.c.gather(self.process_multi_page_listing(href)
+                                          for href in html.xpath('//a[@class="h3Style"]/@href'))
         agenda_urls = set(it.chain.from_iterable(agenda_urls))
         return await self.c.gather(self.process_agenda(href)
                                    for href in agenda_urls
@@ -44,16 +42,14 @@ class PlenaryAgendas(Task):
         html = await self.c.get_html(url)
         pages = html.xpath('//a[contains(@class, "pagingStyle")]/@href')
         if pages:
-            pages = {self.process_multi_page_page(
-                      url, form_data={'page': ''.join(filter(str.isdigit, p))})
+            pages = {self.process_multi_page_page(url, form_data={'page': ''.join(filter(str.isdigit, p))})
                      for p in pages}
             return it.chain.from_iterable(await self.c.gather(pages))
         else:
             return await self.process_multi_page_page(url)
 
     async def process_multi_page_page(self, url, form_data=None):
-        html = await self.c.get_html(url, form_data=form_data,
-                                     request_method='post')
+        html = await self.c.get_html(url, form_data=form_data, request_method='post')
         return html.xpath('//a[@class="h3Style"]/@href')
 
     async def process_agenda(self, url):
@@ -71,11 +67,11 @@ class PlenaryAgendas(Task):
                 _sources=[url],
                 agenda=PS.PlenaryAgenda(cap1=[i for i, _ in agenda_items.cap1],
                                         cap4=[i for i, _ in agenda_items.cap4]),
-                date=date,
                 links=[PS.Link(type='agenda', url=url)],
                 parliamentary_period_id=extract_parliamentary_period(url, text),
                 session=extract_session(url, text),
-                sitting=extract_sitting(url, text))
+                sitting=extract_sitting(url, text),
+                start_date=date)
             try:
                 plenary_sitting.insert(merge=plenary_sitting.exists)
             except plenary_sitting.InsertError as e:
@@ -133,9 +129,9 @@ class AgendaItems:
         for k, v in it.groupby(agenda_items_, key=cls._group):   # __init__ bypasses __setitem__ (maybe)
             agenda_items[k] = tuple(v)
         if None in agenda_items:
-            logger.warning('Unparsed items {} in {!r}'
-                           .format(tuple(k for k, *_ in agenda_items[None]),
-                                   url))
+            logger.warning(f'Unparsed items '
+                           f'{tuple(k for k, *_ in agenda_items[None])} '
+                           f'in {url!r}')
 
         return cls._AgendaItems(
             *map(lambda v: sorted(v, key=agenda_items_.index),
@@ -157,8 +153,7 @@ def extract_id_and_title(url, item):
 
     id_ = RE_ID.search(item)
     if not id_:
-        logger.info('Unable to extract document type of {!r} in {!r}'
-                    .format(item, url))
+        logger.info(f'Unable to extract document type of {item!r} in {url!r}')
         return
 
     # Concatenate the rows into a title string, extract the number,
@@ -168,8 +163,7 @@ def extract_id_and_title(url, item):
     if id_ and title:
         return id_, title
     else:
-        logger.warning('Number or title empty in {} in {!r}'
-                       .format((id_, title), url))
+        logger.warning(f'Number or title empty in {(id_, title)} in {url!r}')
 
 
 RE_PPERIOD = re.compile(r'_?(\w+?)[\'’΄´] ΒΟΥΛΕΥΤΙΚΗ ΠΕΡΙΟ[Δ∆]ΟΣ')
@@ -189,8 +183,9 @@ def extract_parliamentary_period(url, text):
     True
     """
     match = RE_PPERIOD.search(text)
-    return ungarble_qh(match.group(1)) if match else logger.warning(
-        'Unable to extract parliamentary period of {!r}'.format(url))
+    if match:
+        return ungarble_qh(match.group(1))
+    logger.warning(f'Unable to extract parliamentary period of {url!r}')
 
 
 def extract_session(url, text):
@@ -200,8 +195,9 @@ def extract_session(url, text):
     'Ε'
     """
     match = RE_SESSION.search(text)
-    return ungarble_qh(match.group(1)) if match else logger.warning(
-        'Unable to extract session of {!r}'.format(url))
+    if match:
+        return ungarble_qh(match.group(1))
+    logger.warning(f'Unable to extract session of {url!r}')
 
 
 def extract_sitting(url, text):
@@ -211,8 +207,9 @@ def extract_sitting(url, text):
     17
     """
     match = RE_SITTING_NUMBER.search(text)
-    return int(match.group(1)) if match else logger.warning(
-        'Unable to extract sitting number of {!r}'.format(url))
+    if match:
+        return int(match.group(1))
+    logger.warning(f'Unable to extract sitting number of {url!r}')
 
 
 RE_JUNK = re.compile(r'^ *([\.…]+)', re.MULTILINE)
@@ -228,9 +225,10 @@ def parse_agenda(url, html):
     agenda_items = filter(None, map(extract_id_and_title,
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
-    return url, \
-        parse_long_date(clean_spaces(html.xpath('string(//h1)')), plenary=True), \
-        text, agenda_items
+    return (url,
+            parse_long_date(clean_spaces(html.xpath('string(//h1)')), plenary=True),
+            text,
+            agenda_items)
 
 
 RE_PAGE_NO = re.compile(r'^ +(?:\d+|\w)$', re.MULTILINE)
@@ -260,7 +258,7 @@ def parse_pdf_agenda(url, text):
     if (url == 'http://www.parliament.cy/images/media/redirectfile/'
                '13-0312015- agenda ΤΟΠΟΘΕΤΗΣΕΙΣ doc.pdf'):
         # `TableParser` chokes on its mixed two- and three-col layout
-        logger.warning('Skipping {!r} in `parse_pdf_agenda`'.format(url))
+        logger.warning(f'Skipping {url!r} in `parse_pdf_agenda`')
         return
 
     # Get rid of the page numbers 'cause they might intersect items in
@@ -278,19 +276,18 @@ def parse_pdf_agenda(url, text):
     agenda_items = filter(None, map(extract_id_and_title,
                                     it.repeat(url), agenda_items))
     agenda_items = AgendaItems(url, tuple(agenda_items))
-    return url, \
-        parse_long_date(clean_spaces(pages[0], medial_newlines=True), plenary=True), \
-        text, agenda_items
+    return (url,
+            parse_long_date(clean_spaces(pages[0], medial_newlines=True), plenary=True),
+            text,
+            agenda_items)
 
 
 class PlenaryTranscripts(Task):
     """Extract MPs in attendance at plenary sittings from transcripts."""
 
-    ignore = ['praktiko2002-07.04parartima.doc', 'praktiko2011-06-30.doc']
+    NAMES = load_pairings('attendance_names.csv')
 
-    with (Path(__file__).parent.parent
-          /'data'/'reconciliation'/'attendance_names.csv').open() as file:
-        NAMES = dict(it.islice(csv.reader(file), 1, None))
+    ignore = ['praktiko2002-07.04parartima.doc', 'praktiko2011-06-30.doc']
 
     async def __call__(self):
         html = await self.c.get_html('http://www2.parliament.cy/parliamentgr/008_01.htm')
@@ -315,17 +312,17 @@ class PlenaryTranscripts(Task):
                 filter(None, (parse_transcript(*t) for t in output)):
             attendees = filter(None,
                                ((PlenaryTranscripts.NAMES.get(v) or
-                                 logger.error('No match found for ' + repr(v)))
+                                 logger.error(f'No match found for {v!r}'))
                                 for v in extract_attendees(url, text, heading, date)))
             plenary_sitting = \
                 PS(_sources=[url],
                    agenda=PS.PlenaryAgenda(cap2=cap2),
                    attendees=[{'mp_id': a} for a in attendees],
-                   date=date,
                    links=[PS.Link(type='transcript', url=url)],
                    parliamentary_period_id=extract_parliamentary_period(url, heading),
                    session=extract_session(url, heading),
-                   sitting=extract_sitting_from_tr(url, heading))
+                   sitting=extract_sitting_from_tr(url, heading),
+                   start_date=date)
             plenary_sitting.insert(merge=plenary_sitting.exists)
 
             for bill in bills:
@@ -336,7 +333,7 @@ class PlenaryTranscripts(Task):
                                              title=bill.title)
                 except ValueError:
                     # Discard likely malformed bills
-                    logger.error('Unable to parse {!r} into a bill'.format(bill))
+                    logger.error(f'Unable to parse {bill!r} into a bill')
                     continue
 
                 bill = Bill(_sources=[url], actions=[submit],
@@ -382,7 +379,7 @@ def select_president(date):
         _, name = next(match)
         return name
     except StopIteration:
-        raise ValueError('No President found for {!r}'.format(date)) from None
+        raise ValueError(f'No President found for {date!r}') from None
 
 
 ATTENDEE_SUBS = (('|', ' '),
@@ -423,8 +420,9 @@ RE_SITTING_NUMBER_TR = re.compile(r'Αρ\. (\d+)')
 
 def extract_sitting_from_tr(url, text):
     match = RE_SITTING_NUMBER_TR.search(text)
-    return int(match.group(1)) if match else logger.warning(
-        'Unable to extract sitting number of {!r}'.format(url))
+    if match:
+        return int(match.group(1))
+    logger.warning(f'Unable to extract sitting number of {url!r}')
 
 
 _Cap2Item = namedtuple('Cap2Item', 'number title sponsors committees')
@@ -437,14 +435,12 @@ def extract_cap2_item(url, item):
     try:
         title, sponsors, committees = item
     except ValueError:
-        logger.warning('Unable to parse Chapter 2 item {} in {!r}'
-                       .format(item, url))
+        logger.warning(f'Unable to parse Chapter 2 item {item} in {url!r}')
         return
 
     id_ = RE_ID.search(title)
     if not id_:
-        logger.info('Unable to extract document type of {} in {!r}'
-                    .format(item, url))
+        logger.info(f'Unable to extract document type of {item} in {url!r}')
         return
     return _Cap2Item(id_.group(1), RE_TITLE_OTHER.sub('', title).rstrip('. '),
                      sponsors, committees)
@@ -481,7 +477,7 @@ def extract_cap2(url, text):
     try:
         item_table = RE_CAP2.search(text).group(1)
     except AttributeError:
-        logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
+        logger.warning(f'Unable to extract Chapter 2 table in {url!r}')
         return
 
     item_table = RE_PAGE_NO.sub('', item_table).replace('|', ' ').split('\x0c')
@@ -556,7 +552,7 @@ def extract_pandoc_cap2(url, content):
     try:
         table = next(tables)
     except StopIteration:
-        logger.warning('Unable to extract Chapter 2 table in {!r}'.format(url))
+        logger.warning(f'Unable to extract Chapter 2 table in {url!r}')
         return
 
     items = tuple(extract_pandoc_items(url, _walk_pandoc_ast([table])))
@@ -593,7 +589,7 @@ def parse_transcript(url, func, content):
     try:
         date = extract_start_time(heading)
     except Exception as e:
-        logger.error('{}; skipping {!r}'.format(e, url))
+        logger.error(f'{e}; skipping {url!r}')
         return
 
     if func == 'docx_to_json':
@@ -620,11 +616,11 @@ class FirstReading(Task):
                 it.groupby(sorted(docs, key=lambda i: i['date_tabled']),
                            key=lambda i: i['date_tabled']))
         for date, items in docs:
-            if PS.collection.count({'date': re.compile(date)}) != 1:
-                logger.error('No single match found for ' + repr(date))
+            if PS.collection.count({'start_date': re.compile(date)}) != 1:
+                logger.error('No single match found for {date!r}')
                 continue
 
-            PS(_id=PS.collection.find_one({'date': re.compile(date)})['_id'],
+            PS(_id=PS.collection.find_one({'start_date': re.compile(date)})['_id'],
                _sources=[FirstReading.remote_scraper],
                agenda=PS.PlenaryAgenda(cap2=[i['number'] for i in items])
                ).insert(merge=True)

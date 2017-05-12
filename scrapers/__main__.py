@@ -2,10 +2,6 @@
 """\
 Cypriot-parliament scraper.
 
-This package collects and stratifies some of what's made available on
-the Cypriot parliament's website.  For more information, please see the
-README.
-
 Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
@@ -27,6 +23,11 @@ import textwrap
 from docopt import docopt, DocoptExit
 
 from . import crawling, default_db, io, models, tasks
+
+
+def ǀ(cmd):
+    return subprocess.run('git -C data ' + cmd,
+                          check=True, shell=True, stdout=subprocess.PIPE)
 
 
 def _register(fn, name=None):
@@ -78,6 +79,7 @@ def load_data(args):
         -k --keep-db    Don't drop the database before importing
         -h --help       Show this screen
     """
+    assert ǀ('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
     if not args['--keep-db']:
         default_db.command('dropDatabase')
 
@@ -85,7 +87,7 @@ def load_data(args):
              for d in map(Path, args['<from-folders>'] or ('./data/mps',))
              for f in d.glob('*.yaml'))
     for path, collection in files:
-        default_db[collection].insert_one(io.YamlManager.load_record(str(path)))
+        default_db[collection].insert_one(io.YamlManager.load_record(path))
 
 
 @_register('data unload')
@@ -101,15 +103,14 @@ def unload_data(args):
     for collection in (args['<collections>'] or default_db.collection_names()):
         collection = default_db[collection]
         if collection.count() == 0:
-            raise DocoptExit('Collection {!r} is empty'
-                             .format(collection.full_name))
-        print('Unloading {!r}...'.format(collection.name))
+            raise DocoptExit(f'Collection {collection.full_name!r} is empty')
+        print(f'Unloading {collection.name!r}...')
 
         head = Path(args['--location'])/collection.name
         if not head.exists():
             head.mkdir(parents=True)
         for document in collection.find():
-            io.YamlManager.dump_record(document, str(head))
+            io.YamlManager.dump_record(document, head)
 
 
 @_register('data export')
@@ -123,16 +124,12 @@ def export_data(args):
         -s --stay           Stay on export branch
         -h --help           Show this screen
     """
-    def ǀ(cmd):
-        return subprocess.run('git -C data ' + cmd,
-                              check=True, shell=True, stdout=subprocess.PIPE)
-
     assert ǀ('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
     has_stash = ǀ('stash').stdout.strip() != b'No local changes to save'
     ǀ('checkout export')
 
     for _, model in models.registry:
-        print('Exporting {!r}...'.format(model.collection.name))
+        print(f'Exporting {model.collection.name!r}...')
         with Path('data', model.collection.name + '.json').open('w') as file:
             file.write(model.export(format='json'))
     with Path('data', 'datapackage.json').open('w') as file:

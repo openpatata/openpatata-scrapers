@@ -104,8 +104,8 @@ class Crawler:
         try:
             decode_func = DECODE_FUNCS[magic.from_buffer(payload, mime=True)]
         except KeyError:
-            raise ValueError('Unable to decode {!r};'
-                             ' unknown mime type'.format(url)) from None
+            raise ValueError(f'Unable to decode {url!r}; unknown mime type') \
+                from None
         else:
             return decode_func.__name__, \
                 await self.exec_blocking(decode_func)(payload)
@@ -148,6 +148,10 @@ class Task:
         builtins.logger = logging.getLogger(self.__class__.__name__)
         self.crawler = self.c = crawler
 
-    def after(output):
-        """Override to handle the output of the `Task`."""
-        return output
+    @classmethod
+    def after(cls, output):
+        for item in output:
+            cls.parse_item(*item)
+
+    def parse_item(*args):
+        raise NotImplementedError
