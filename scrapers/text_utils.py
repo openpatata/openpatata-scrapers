@@ -16,8 +16,6 @@ import icu
 import lxml.etree
 import lxml.html
 
-from .misc_utils import starfilter
-
 
 def _text_from_sp(args, input_=None):
     return (subprocess.run(args, input=input_, stdout=subprocess.PIPE)
@@ -47,8 +45,8 @@ def pdf_to_text(buffer):
     return _text_from_sp(('pdftotext', '-layout', '-', '-'), buffer)
 
 
-def html_to_lxml(url, text, clean=False):
-    """Parse plain-text HTML into an `lxml` tree."""
+def parse_html(url, text, clean=False):
+    """Parse HTML into an `lxml` tree."""
     if clean:
         text = _text_from_sp(('pandoc', '--from=html', '--to=html5'),
                              text.encode())
@@ -122,9 +120,8 @@ class TableParser:
         if part == line:   # If the trailing cell's empty, take a shortcut
             return col
 
-        part = starfilter(lambda _, c: c in string.whitespace,
-                          reversed(tuple(enumerate(part))))
-        new_col, _ = next(part)
+        new_col = next(i for i, c in reversed(tuple(enumerate(part)))
+                       if c in string.whitespace)
         return new_col
 
     @classmethod
@@ -320,12 +317,13 @@ def parse_long_date(date_string, plenary=False,
         raise ValueError(f'Malformed month in date {date_string!r}') from None
 
 
-def date2dato(date):
-    """Convert a clear-text ISO date into a `datetime.date` object."""
+def parse_datetime(dt):
+    """Convert a clear-text ISO date(time) into a `datetime.date(time)` object.
+    """
     try:
-        return datetime.datetime.strptime(date, '%Y-%m-%d')
+        return datetime.datetime.strptime(dt, '%Y-%m-%d')
     except ValueError:
-        return datetime.datetime.strptime(date, '%Y-%m-%dT%H:%M:%S')
+        return datetime.datetime.strptime(dt, '%Y-%m-%dT%H:%M:%S')
 
 
 def clean_spaces(text, medial_newlines=False,

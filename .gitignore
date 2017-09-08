@@ -1,5 +1,6 @@
+__pycache__
 *.bak
 *.log
-__pycache__
 /data*
+/sandbox
 /venv

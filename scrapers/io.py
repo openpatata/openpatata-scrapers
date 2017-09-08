@@ -12,58 +12,41 @@ class DumpError(Exception):
     """Exception raised by `*Manager`s."""
 
 
-class _YamlConstructor(yaml.constructor.SafeConstructor):
-
-    def construct_mapping(self, node, deep=False):
-        """Alpha-sort !maps on import."""
-        val = super().construct_mapping(node, deep)
-        return OrderedDict(sorted(val.items()))
-
-_YamlConstructor.add_constructor(yaml.resolver.Resolver.DEFAULT_MAPPING_TAG,
-                                 _YamlConstructor.construct_mapping)
-
-
-class _YamlLoader(yaml.CSafeLoader, _YamlConstructor):
-    """Inject our `_YamlConstructor` before `yaml.CSafeLoader`'s."""
+def _represent_str(loader, data):
+    # Apply block style to multi-line strings
+    return loader.represent_scalar(yaml.resolver.Resolver.DEFAULT_SCALAR_TAG,
+                                   data,
+                                   '|' if '\n' in data else None)
 
 
 class _YamlRepresenter(yaml.representer.SafeRepresenter):
+    pass
 
-    def represent_str(self, data):
-        """Apply block style to multi-line strings."""
-        style = '|' if '\n' in data else None
-        return self.represent_scalar(yaml.resolver.Resolver.DEFAULT_SCALAR_TAG,
-                                     data, style)
-
-_YamlRepresenter.add_representer(str,
-                                 _YamlRepresenter.represent_str)
-_YamlRepresenter.add_representer(OrderedDict,
-                                 # PyYAML sorts dicts on export out of the box
-                                 _YamlRepresenter.represent_dict)
+_YamlRepresenter.add_representer(str, _represent_str)
 
 
 class _YamlDumper(yaml.CSafeDumper, _YamlRepresenter):
-    """Inject our `_YamlRepresenter` before `CSafeDumper`'s."""
+    pass
 
 
 class YamlManager:
 
     @staticmethod
-    def load_record(path):
+    def load_record(path: Path):
         """Import a document from disk."""
-        with open(path) as file:
+        with path.open() as file:
             doc = yaml.load(file,
-                            Loader=_YamlLoader)
+                            Loader=yaml.CSafeLoader)
             return doc
 
     @staticmethod
-    def dump_record(doc, head):
-        """Save a database record to disk."""
+    def dump_record(doc, head: Path):
+        """Save a database record on disk."""
         try:
             doc_id = doc['_id']
         except KeyError:
             raise DumpError(f'No `_id` in {doc!r}') from None
-        with open(Path(head)/f'{doc_id}.yaml', 'w') as file:
+        with (head/f'{doc_id}.yaml').open('w') as file:
             yaml.dump(doc, file,
                       Dumper=_YamlDumper,
                       allow_unicode=True, default_flow_style=False)

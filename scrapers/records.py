@@ -1,7 +1,6 @@
 
 """Model classes."""
 
-from collections import OrderedDict
 from copy import deepcopy
 import datetime as dt
 import itertools as it
@@ -12,7 +11,6 @@ from jsonschema.exceptions import ValidationError
 import pymongo
 
 from .io import YamlManager
-from .misc_utils import starfilter
 from .text_utils import _text_from_sp
 
 
@@ -31,9 +29,7 @@ def _compact(self):
     ...  .data == {'a.b.c': 1})
     True
     """
-    return self.__class__(
-        _raw_data=self.data.__class__(starfilter(lambda _, v: v,
-                                                 self.data.items())))
+    return self.__class__(_raw_data={k: v for k, v in self.data.items() if v})
 
 
 def _sort(data):
@@ -45,10 +41,9 @@ def _sort(data):
     """
     def sort(value):
         if isinstance(value, dict):
-            return OrderedDict(it.starmap(lambda k, v: (k, sort(v)),
-                                          sorted(value.items())))
+            return {k: sort(v) for k, v in sorted(value.items())}
         elif isinstance(value, list):
-            return list(map(sort, value))
+            return [sort(i) for i in value]
         return value
 
     return sort(data)
@@ -72,14 +67,6 @@ def _unwrap(self):
     return self.__class__(_raw_data=self.data.__class__(rekey(self.data)))
 
 
-class _prepare_record(type):
-
-    def __new__(cls, name, bases, cls_dict):
-        cls = super().__new__(cls, name, bases, cls_dict)
-        cls.template = _sort(getattr(cls, 'template', {}))
-        return cls
-
-
 class RecordRegistry(list):
 
     def create_data_package(self):
@@ -87,7 +74,7 @@ class RecordRegistry(list):
                             resources=[m._as_resource() for _, m in sorted(self)])
 
 
-class BaseRecord(metaclass=_prepare_record):
+class BaseRecord:
     """A base class for our records.
 
     Both class attributes, `template` and `required_properties`, are optional.
@@ -112,32 +99,14 @@ class BaseRecord(metaclass=_prepare_record):
         self.data = deepcopy(self.template)
         self.data.update(kwargs)
 
+    def __init_subclass__(cls):
+        cls.template = _sort(getattr(cls, 'template', {}))
+
     def __repr__(self):
         return f'<{self.__class__.__name__}: {self.data!r}>'
 
 
-class _prepare_insertable_record(_prepare_record):
-
-    def __new__(cls, name, bases, cls_dict):
-        if bases == (BaseRecord,):
-            return super().__new__(cls, name, bases, cls_dict)
-
-        schema = cls_dict['schema']
-        if isinstance(schema, str):
-            schema = YamlManager.load_record(Path(__file__).parent
-                                             /'data'/'schemas'/(schema + '.yaml'))
-        kls = super().__new__(cls, name, bases,
-                              {**cls_dict,
-                               'schema': schema,
-                               'template': {**cls_dict['template'], '_id': None},
-                               'validator': Validator(schema, format_checker=
-                                                      FormatChecker(('email',)))})
-        if 'registry' in cls_dict:
-            cls_dict['registry'].append((name, kls))
-        return kls
-
-
-class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
+class InsertableRecord(BaseRecord):
     """A record that can be inserted into the database.
 
     To interface with the database, `InsertableRecord`s must define a
@@ -146,10 +115,10 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
     Set up the testing environment.
 
         >>> from uuid import uuid4
-        >>> from . import Db \
+        >>> from . import get_db \
 
         >>> test_db_name = uuid4().hex
-        >>> test_db = Db.get('mongodb://localhost:27017/' + test_db_name)
+        >>> test_db = get_db('mongodb://localhost:27017/' + test_db_name)
 
     Test basic operation.
 
@@ -213,10 +182,20 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
         True
     """
 
+    __records__ = RecordRegistry()
+
     def __init__(self, *, _raw_data={}, **kwargs):
         super().__init__(_raw_data=_raw_data, **kwargs)
         if not _raw_data and not self.data['_id']:
             self.data['_id'] = self.generate__id()
+
+    def __init_subclass__(cls):
+        cls.schema = YamlManager.load_record(Path(__file__).parent/'data'
+                                             /'schemas'/f'{cls.schema}.yaml')
+        cls.template = {**cls.template, '_id': None}
+        cls.validator = Validator(cls.schema,
+                                  format_checker=FormatChecker(('email',)))
+        cls.__records__.append((cls.__name__, cls))
 
     @property
     def _id(self):
@@ -230,10 +209,6 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
 
     @property
     def exists(self):
-        """
-        Check to see whether a record with the same `self._id` exists in
-        the database.
-        """
         return bool(self.collection.find_one(self._id))
 
     def generate__id(self):
@@ -284,7 +259,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
                                   f' with operation {insert!r}')
         try:
             self.validator.validate(data)
-        except:
+        except Exception:
             # Roll back the changes if validation has failed
             self.delete()
             if prior_data:
@@ -340,15 +315,7 @@ class InsertableRecord(BaseRecord, metaclass=_prepare_insertable_record):
     InsertError = InsertError
 
 
-class _prepare_sub_record(_prepare_record):
-
-    def __new__(cls, name, bases, cls_dict):
-        cls = super().__new__(cls, name, bases, cls_dict)
-        cls._construct = type(cls.__name__, (BaseRecord,), dict(cls.__dict__))
-        return cls
-
-
-class SubRecord(metaclass=_prepare_sub_record):
+class SubRecord:
     """A record contained within another record.
 
     A SubRecord returns its `self.data` on initialisation.
@@ -362,6 +329,9 @@ class SubRecord(metaclass=_prepare_sub_record):
 
     def __new__(cls, *, _raw_data={}, **kwargs):
         return _sort(cls._construct(_raw_data=_raw_data, **kwargs)).data
+
+    def __init_subclass__(cls):
+        cls._construct = type(cls.__name__, (BaseRecord,), dict(cls.__dict__))
 
 
 class _DataPackage(SubRecord):

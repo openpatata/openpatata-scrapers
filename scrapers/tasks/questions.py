@@ -2,14 +2,18 @@
 import csv
 from io import StringIO
 import itertools as it
+import logging
 import re
 
 from lxml.html import HtmlElement
 
-from ..crawling import Task
+from ..client import Task
 from ..models import MP, Question
 from ..reconciliation import pair_name, load_pairings
 from ..text_utils import clean_spaces, parse_long_date, ungarble_qh
+
+
+logger = logging.getLogger(__name__)
 
 
 class Questions(Task):
@@ -50,7 +54,7 @@ class Questions(Task):
                             identifier=match['id'],
                             text='\n\n'.join(p.text for p in body).strip())
         if question.exists:
-            logger.info(f'Merging question {question!r}')
+            logger.debug(f'Merging question {question!r}')
             question.insert(merge=True)
         else:
             question.insert()
@@ -140,8 +144,8 @@ def extract_answers(url, match, footer):
     answer_links = it.chain.from_iterable(filter(None, answer_links))
     answer_links = sorted(set(answer_links))
     if not answer_links:
-        logger.info(f'Unable to extract URL of answer to question with number'
-                    f' {match["id"]!r} in {url!r}')
+        logger.debug(f'Unable to extract URL of answer to question with number'
+                     f' {match["id"]!r} in {url!r}')
     return answer_links
 
 

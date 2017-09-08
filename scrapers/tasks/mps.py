@@ -3,13 +3,17 @@ import csv
 from io import StringIO
 import itertools as it
 import json
+import logging
 
-from ..crawling import Task
+from ..client import Task
 from ..models import (ContactDetails, Identifier, Link,
                       MP, MultilingualField, OtherName)
 from ..reconciliation import pair_name, load_pairings
 from ..text_utils import (clean_spaces, parse_long_date,
                           translit_elGrek2Latn, translit_el2tr)
+
+
+logger = logging.getLogger(__name__)
 
 
 class MpProfiles(Task):

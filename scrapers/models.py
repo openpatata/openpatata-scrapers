@@ -4,10 +4,8 @@
 from pathlib import Path
 
 from . import default_db
-from .records import InsertableRecord, SubRecord, RecordRegistry
-from .text_utils import date2dato, translit_slugify
-
-registry = RecordRegistry()
+from .records import InsertableRecord, SubRecord
+from .text_utils import parse_datetime, translit_slugify
 
 
 class Bill(InsertableRecord):
@@ -18,7 +16,6 @@ class Bill(InsertableRecord):
                 'identifier': None,
                 'title': None,
                 'titles': []}
-    registry = registry
     schema = 'bill'
 
     def generate__id(self):
@@ -64,7 +61,6 @@ class CommitteeReport(InsertableRecord):
                 'text': None,
                 'title': None,
                 'url': None}
-    registry = registry
     schema = 'committee_report'
 
     def generate__id(self):
@@ -85,7 +81,6 @@ class ElectoralDistrict(InsertableRecord):
 
     collection = default_db.electoral_districts
     template = {'name': {}}
-    registry = registry
     schema = 'electoral_district'
 
 
@@ -111,7 +106,6 @@ class MP(InsertableRecord):
                 'name': None,
                 'other_names': [],
                 'memberships': []}
-    registry = registry
     schema = 'mp'
 
     def generate__id(self):
@@ -178,7 +172,6 @@ class ParliamentaryPeriod(InsertableRecord):
                 'number': {},
                 'start_date': None,
                 'end_date': None}
-    registry = registry
     schema = 'parliamentary_period'
 
 
@@ -186,7 +179,6 @@ class Party(InsertableRecord):
 
     collection = default_db.parties
     template = {'abbreviation': {}, 'name': {}}
-    registry = registry
     schema = 'party'
 
 
@@ -201,11 +193,10 @@ class PlenarySitting(InsertableRecord):
                 'session': None,
                 'sitting': None,
                 'start_date': None}
-    registry = registry
     schema = 'plenary_sitting'
 
     def generate__id(self):
-        date = date2dato(self.data['start_date']).date().isoformat()
+        date = parse_datetime(self.data['start_date']).date().isoformat()
         data = [self.data.get(i) for i in ('parliamentary_period_id', 'session',
                                            'sitting')]
         return '_'.join(map(str, [date] + data))
@@ -248,7 +239,6 @@ class Question(InsertableRecord):
                 'heading': None,
                 'identifier': None,
                 'text': None}
-    registry = registry
     schema = 'question'
 
     def generate__id(self):

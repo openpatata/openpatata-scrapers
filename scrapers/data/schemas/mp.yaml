@@ -182,6 +182,6 @@ required:
 - gender
 - identifiers
 - images
+- memberships
 - name
 - other_names
-- tenures

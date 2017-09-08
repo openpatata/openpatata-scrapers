@@ -5,7 +5,7 @@ Cypriot-parliament scraper.
 Usage: scrapers [-v] <command> [<args> ...]
 
 Commands:
-    cache     Manage the crawler's cache
+    cache     Manage the client cache
     data      Manage the scraper data
     tasks     Run a scraping task
 
@@ -22,10 +22,10 @@ import textwrap
 
 from docopt import docopt, DocoptExit
 
-from . import crawling, default_db, io, models, tasks
+from . import client, default_db, io, models, records, tasks
 
 
-def ǀ(cmd):
+def _git(cmd):
     return subprocess.run('git -C data ' + cmd,
                           check=True, shell=True, stdout=subprocess.PIPE)
 
@@ -73,13 +73,13 @@ def manage_data(args):
 def load_data(args):
     """Usage: scrapers data load [--keep-db] [<from-folders> ...]
 
-    Populate the database <from-folders>, defaulting to just './data/mps'.
+    Populate the database <from-folders>, defaulting to `./data/mps`.
 
     Options:
         -k --keep-db    Don't drop the database before importing
         -h --help       Show this screen
     """
-    assert ǀ('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
+    assert _git('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
     if not args['--keep-db']:
         default_db.command('dropDatabase')
 
@@ -94,7 +94,8 @@ def load_data(args):
 def unload_data(args):
     """Usage: scrapers data unload [--location=<location>] [<collections> ...]
 
-    Dump <collections>, defaulting to all, at <location>.
+    Dump <collections> at <location>.  The default behaviour is to dump all
+    collections.
 
     Options:
         --location=<location>   Path on disk to dump the data  [default: ./data-new]
@@ -124,33 +125,32 @@ def export_data(args):
         -s --stay           Stay on export branch
         -h --help           Show this screen
     """
-    assert ǀ('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
-    has_stash = ǀ('stash').stdout.strip() != b'No local changes to save'
-    ǀ('checkout export')
+    assert _git('rev-parse --abbrev-ref HEAD').stdout.strip() == b'master'
+    has_stash = _git('stash').stdout.strip() != b'No local changes to save'
+    _git('checkout export')
 
-    for _, model in models.registry:
+    for _, model in records.InsertableRecord.__records__:
         print(f'Exporting {model.collection.name!r}...')
         with Path('data', model.collection.name + '.json').open('w') as file:
             file.write(model.export(format='json'))
     with Path('data', 'datapackage.json').open('w') as file:
-        json.dump(models.registry.create_data_package(), file, indent=2)
+        json.dump(records.InsertableRecord.__records__.create_data_package(),
+                  file, indent=2)
 
-    ǀ('add .')
-    ǀ('commit --author "export-script <export@script>"'
-      '       --message "Export data to JSON"')
+    _git('add .')
+    _git('commit --author "export-script <export@script>"'
+         '       --message "Export data to JSON"')
     if args['--push']:
-        ǀ('push')
+        _git('push')
     if not args['--stay']:
-        ǀ('checkout master')
+        _git('checkout master')
         if has_stash:
-            ǀ('stash pop')
+            _git('stash pop')
 
 
 @_register('tasks')
 def run_task(args):
     """Usage: scrapers tasks run [-d] <task>
-
-    Run a specified scraper task.
 
     Options:
         -d --debug      Print `asyncio` debugging messages to `stderr`
@@ -160,7 +160,7 @@ def run_task(args):
         raise DocoptExit('Available tasks are: ' +
                          '\n'.join(' ' * len('Available tasks are: ') + i
                                    for i in sorted(tasks.TASKS)).strip())
-    crawling.Crawler(debug=args['--debug'])(tasks.TASKS[args['<task>']])
+    client.Client(debug=args['--debug'])(tasks.TASKS[args['<task>']])
 
 
 @_register('cache')
@@ -169,15 +169,13 @@ def manage_cache(args):
     Usage: scrapers cache clear
            scrapers cache dump [<location>]
 
-    Clear or dump the crawler's cache.
-
     Options:
         -h --help       Show this screen
     """
     if args['clear']:
-        crawling.Crawler.clear_text_cache()
+        client.Client.clear_text_cache()
     elif args['dump']:
-        crawling.Crawler.dump_cache(args['<location>'])
+        client.dump_cache(args['<location>'])
 
 
 def main():
